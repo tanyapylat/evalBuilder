@@ -21,7 +21,7 @@ import { cn } from '@/lib/utils';
 
 export function MainEditor() {
   const { configName, setConfigName, saveConfig, yaml } = useEval();
-  const [showYaml, setShowYaml] = useState(true);
+  const [showYaml, setShowYaml] = useState(false);
   const [yamlTheme, setYamlTheme] = useState<'light' | 'dark'>('dark');
 
   return (
