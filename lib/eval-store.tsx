@@ -1,9 +1,21 @@
 'use client';
 
-import React, { createContext, useContext, useReducer, useCallback, useMemo } from 'react';
-import type { EvalConfig, Assertion, TestCase, PromptConfig, JudgeProviderConfig, SavedConfig, EvalRun } from './eval-types';
+import React, { createContext, useContext, useReducer, useCallback, useMemo, useRef } from 'react';
+import { toast } from 'sonner';
+import type { EvalConfig, Assertion, TestCase, PromptConfig, JudgeProviderConfig, SavedConfig, EvalRun, EvalRunStatus } from './eval-types';
 import { DEFAULT_EVAL_CONFIG } from './eval-types';
 import { configToYaml, generateId } from './yaml-utils';
+
+/** Maps the numeric status ID returned by the PM API to our EvalRunStatus enum. */
+function mapStatusId(statusId: number | null | undefined): EvalRunStatus {
+  switch (statusId) {
+    case 1: return 'Complete';
+    case 2: return 'InProgress';
+    case 3: return 'Error';
+    case 4: return 'InQueue';
+    default: return 'InQueue';
+  }
+}
 
 type EvalAction =
   | { type: 'SET_CONFIG'; payload: EvalConfig }
@@ -17,9 +29,14 @@ type EvalAction =
   | { type: 'DELETE_ASSERTION'; payload: number }
   | { type: 'DUPLICATE_ASSERTION'; payload: number }
   | { type: 'REORDER_ASSERTIONS'; payload: Assertion[] }
+  | { type: 'REPLACE_ALL_ASSERTIONS'; payload: Assertion[] }
   | { type: 'ADD_TEST'; payload: TestCase }
+  | { type: 'BATCH_ADD_TESTS'; payload: TestCase[] }
   | { type: 'UPDATE_TEST'; payload: { index: number; test: TestCase } }
   | { type: 'DELETE_TEST'; payload: number }
+  | { type: 'DELETE_TESTS_BY_IDS'; payload: Set<string> }
+  | { type: 'DELETE_ALL_TESTS' }
+  | { type: 'REPLACE_ALL_TESTS'; payload: TestCase[] }
   | { type: 'SET_TESTS_URL'; payload: string }
   | { type: 'SET_RAW_YAML'; payload: string }
   | { type: 'RESET' };
@@ -104,11 +121,26 @@ function evalReducer(state: EvalConfig, action: EvalAction): EvalConfig {
         },
       };
 
+    case 'REPLACE_ALL_ASSERTIONS':
+      return {
+        ...state,
+        defaultTest: {
+          ...state.defaultTest,
+          assert: action.payload,
+        },
+      };
+
     case 'ADD_TEST':
       if (typeof state.tests === 'string') {
         return { ...state, tests: [action.payload] };
       }
       return { ...state, tests: [...state.tests, action.payload] };
+
+    case 'BATCH_ADD_TESTS':
+      if (typeof state.tests === 'string') {
+        return { ...state, tests: action.payload };
+      }
+      return { ...state, tests: [...state.tests, ...action.payload] };
 
     case 'UPDATE_TEST':
       if (typeof state.tests === 'string') return state;
@@ -119,6 +151,16 @@ function evalReducer(state: EvalConfig, action: EvalAction): EvalConfig {
     case 'DELETE_TEST':
       if (typeof state.tests === 'string') return state;
       return { ...state, tests: state.tests.filter((_, i) => i !== action.payload) };
+
+    case 'DELETE_TESTS_BY_IDS':
+      if (typeof state.tests === 'string') return state;
+      return { ...state, tests: state.tests.filter((t) => !action.payload.has(t.id)) };
+
+    case 'DELETE_ALL_TESTS':
+      return { ...state, tests: [] };
+
+    case 'REPLACE_ALL_TESTS':
+      return { ...state, tests: action.payload };
 
     case 'SET_TESTS_URL':
       return { ...state, tests: action.payload };
@@ -141,8 +183,12 @@ interface EvalContextType {
   setConfigName: (name: string) => void;
   savedConfigs: SavedConfig[];
   evalRuns: EvalRun[];
+  activeRunJobId: string | null;
   activeConfigId: string | null;
   setActiveConfigId: (id: string | null) => void;
+  designatedConfigId: string | null;
+  setDesignatedConfigId: (id: string | null) => void;
+  deleteSavedConfig: (id: string) => void;
   dispatch: React.Dispatch<EvalAction>;
   setDescription: (description: string) => void;
   addPrompt: (prompt?: Partial<PromptConfig>) => void;
@@ -154,15 +200,22 @@ interface EvalContextType {
   deleteAssertion: (index: number) => void;
   duplicateAssertion: (index: number) => void;
   reorderAssertions: (assertions: Assertion[]) => void;
+  replaceAllAssertions: (assertions: Assertion[]) => void;
   addTest: (test?: Partial<TestCase>) => void;
+  batchAddTests: (tests: TestCase[]) => void;
   updateTest: (index: number, test: TestCase) => void;
   deleteTest: (index: number) => void;
+  deleteTestsByIds: (ids: Set<string>) => void;
+  deleteAllTests: () => void;
+  replaceAllTests: (tests: TestCase[]) => void;
   setTestsUrl: (url: string) => void;
   setRawYaml: (yaml: string) => void;
   saveConfig: () => void;
   loadConfig: (id: string) => void;
   createNewConfig: () => void;
   reset: () => void;
+  isRunning: boolean;
+  runEval: () => Promise<void>;
 }
 
 const EvalContext = createContext<EvalContextType | null>(null);
@@ -191,8 +244,12 @@ export function EvalProvider({ children }: { children: React.ReactNode }) {
   const [config, dispatch] = useReducer(evalReducer, DEFAULT_EVAL_CONFIG);
   const [configName, setConfigName] = React.useState('FAQ Test Config');
   const [savedConfigs, setSavedConfigs] = React.useState<SavedConfig[]>(SAMPLE_CONFIGS);
-  const [evalRuns] = React.useState<EvalRun[]>(SAMPLE_RUNS);
+  const [evalRuns, setEvalRuns] = React.useState<EvalRun[]>(SAMPLE_RUNS);
+  const [activeRunJobId, setActiveRunJobId] = React.useState<string | null>(null);
   const [activeConfigId, setActiveConfigId] = React.useState<string | null>('config-1');
+  const pollingIntervals = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
+  const [designatedConfigId, setDesignatedConfigId] = React.useState<string | null>('config-1');
+  const [isRunning, setIsRunning] = React.useState(false);
 
   const yaml = useMemo(() => configToYaml(config), [config]);
 
@@ -251,6 +308,10 @@ export function EvalProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: 'REORDER_ASSERTIONS', payload: assertions });
   }, []);
 
+  const replaceAllAssertions = useCallback((assertions: Assertion[]) => {
+    dispatch({ type: 'REPLACE_ALL_ASSERTIONS', payload: assertions });
+  }, []);
+
   const addTest = useCallback((test?: Partial<TestCase>) => {
     dispatch({
       type: 'ADD_TEST',
@@ -262,12 +323,28 @@ export function EvalProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  const batchAddTests = useCallback((tests: TestCase[]) => {
+    dispatch({ type: 'BATCH_ADD_TESTS', payload: tests });
+  }, []);
+
   const updateTest = useCallback((index: number, test: TestCase) => {
     dispatch({ type: 'UPDATE_TEST', payload: { index, test } });
   }, []);
 
   const deleteTest = useCallback((index: number) => {
     dispatch({ type: 'DELETE_TEST', payload: index });
+  }, []);
+
+  const deleteTestsByIds = useCallback((ids: Set<string>) => {
+    dispatch({ type: 'DELETE_TESTS_BY_IDS', payload: ids });
+  }, []);
+
+  const deleteAllTests = useCallback(() => {
+    dispatch({ type: 'DELETE_ALL_TESTS' });
+  }, []);
+
+  const replaceAllTests = useCallback((tests: TestCase[]) => {
+    dispatch({ type: 'REPLACE_ALL_TESTS', payload: tests });
   }, []);
 
   const setTestsUrl = useCallback((url: string) => {
@@ -317,9 +394,143 @@ export function EvalProvider({ children }: { children: React.ReactNode }) {
     setActiveConfigId(null);
   }, []);
 
+  const deleteSavedConfig = useCallback(
+    (id: string) => {
+      const next = savedConfigs.filter((c) => c.id !== id);
+      setSavedConfigs(next);
+
+      if (activeConfigId === id) {
+        const replacement = next[0];
+        if (replacement) {
+          setActiveConfigId(replacement.id);
+          setConfigName(replacement.name);
+          dispatch({ type: 'SET_CONFIG', payload: replacement.config });
+        } else {
+          setActiveConfigId(null);
+          setConfigName('New Configuration');
+          dispatch({ type: 'RESET' });
+        }
+      }
+
+      if (designatedConfigId === id) {
+        setDesignatedConfigId(next[0]?.id ?? null);
+      }
+    },
+    [savedConfigs, activeConfigId, designatedConfigId],
+  );
+
   const reset = useCallback(() => {
     dispatch({ type: 'RESET' });
   }, []);
+
+  const stopPolling = useCallback((jobId: string) => {
+    const interval = pollingIntervals.current.get(jobId);
+    if (interval !== undefined) {
+      clearInterval(interval);
+      pollingIntervals.current.delete(jobId);
+    }
+  }, []);
+
+  const pollRunStatus = useCallback(async (jobId: string, runId: string) => {
+    try {
+      const response = await fetch(`/api/run-eval/${encodeURIComponent(jobId)}`);
+      if (!response.ok) return;
+
+      const data = await response.json();
+      const status = mapStatusId(data.promptEvalRunStatusId);
+      const successes: number = data.successes ?? 0;
+      const total: number = data.totalTestCases ?? 0;
+
+      setEvalRuns((prev) =>
+        prev.map((run) =>
+          run.id === runId
+            ? {
+                ...run,
+                status,
+                evalId: data.evalId ?? run.evalId,
+                promptfooBaseUrl: data.promptfooBaseUrl ?? run.promptfooBaseUrl,
+                passedCount: total > 0 ? successes : run.passedCount,
+                totalCount: total > 0 ? total : run.totalCount,
+                passRate:
+                  total > 0
+                    ? Math.round((successes / total) * 1000) / 10
+                    : run.passRate,
+                errorMessage: data.errorMessage ?? run.errorMessage,
+              }
+            : run,
+        ),
+      );
+
+      if (status === 'Complete') {
+        stopPolling(jobId);
+        setActiveRunJobId(null);
+        setIsRunning(false);
+        const passRate = total > 0 ? Math.round((successes / total) * 1000) / 10 : 0;
+        toast.success(`Evaluation complete: ${successes}/${total} passed (${passRate}%)`);
+      } else if (status === 'Error') {
+        stopPolling(jobId);
+        setActiveRunJobId(null);
+        setIsRunning(false);
+        toast.error(`Evaluation failed: ${data.errorMessage ?? 'Unknown error'}`);
+      }
+    } catch {
+      // Silently ignore poll errors; they'll retry on the next interval.
+    }
+  }, [stopPolling]);
+
+  const runEval = useCallback(async () => {
+    setIsRunning(true);
+    const toastId = toast.loading('Queuing evaluation…');
+    try {
+      const response = await fetch('/api/run-eval', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error ?? 'Failed to start evaluation');
+      }
+
+      const jobId: string = data.jobId;
+      const runId = generateId();
+      const now = new Date().toISOString();
+
+      const newRun: EvalRun = {
+        id: runId,
+        configId: activeConfigId ?? '',
+        configName: configName,
+        passedCount: 0,
+        totalCount: 0,
+        passRate: 0,
+        runAt: now,
+        runBy: 'me',
+        status: 'InQueue',
+        jobId,
+        promptfooBaseUrl: data.promptfooBaseUrl,
+      };
+
+      setEvalRuns((prev) => [newRun, ...prev]);
+      setActiveRunJobId(jobId);
+
+      toast.success('Evaluation queued. It will start shortly.', { id: toastId });
+
+      // Start polling every 15 seconds, matching the Prompt Studio polling interval.
+      const interval = setInterval(() => {
+        pollRunStatus(jobId, runId);
+      }, 15_000);
+      pollingIntervals.current.set(jobId, interval);
+
+      // Do an immediate first poll after a short delay so we catch fast completions.
+      setTimeout(() => pollRunStatus(jobId, runId), 3_000);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(`Evaluation failed: ${message}`, { id: toastId });
+      setIsRunning(false);
+    }
+  }, [config, activeConfigId, configName, pollRunStatus]);
 
   return (
     <EvalContext.Provider
@@ -330,8 +541,12 @@ export function EvalProvider({ children }: { children: React.ReactNode }) {
         setConfigName,
         savedConfigs,
         evalRuns,
+        activeRunJobId,
         activeConfigId,
         setActiveConfigId,
+        designatedConfigId,
+        setDesignatedConfigId,
+        deleteSavedConfig,
         dispatch,
         setDescription,
         addPrompt,
@@ -343,15 +558,22 @@ export function EvalProvider({ children }: { children: React.ReactNode }) {
         deleteAssertion,
         duplicateAssertion,
         reorderAssertions,
+        replaceAllAssertions,
         addTest,
+        batchAddTests,
         updateTest,
         deleteTest,
+        deleteTestsByIds,
+        deleteAllTests,
+        replaceAllTests,
         setTestsUrl,
         setRawYaml,
         saveConfig,
         loadConfig,
         createNewConfig,
         reset,
+        isRunning,
+        runEval,
       }}
     >
       {children}

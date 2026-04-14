@@ -9,15 +9,15 @@ export function DescriptionSection() {
 
   return (
     <Card>
-      <CardHeader className="pb-3">
+      <CardHeader className="px-4 py-3 pb-0">
         <CardTitle className="text-base font-medium">Description</CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="px-4 pb-3 pt-0">
         <Textarea
           value={config.description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Enter a description for this eval configuration..."
-          className="min-h-20 resize-none"
+          className="min-h-10 resize-none"
         />
       </CardContent>
     </Card>

@@ -96,6 +96,8 @@ export interface SavedConfig {
   config: EvalConfig;
 }
 
+export type EvalRunStatus = 'InQueue' | 'InProgress' | 'Complete' | 'Error';
+
 export interface EvalRun {
   id: string;
   configId: string;
@@ -105,6 +107,12 @@ export interface EvalRun {
   passRate: number;
   runAt: string;
   runBy: string;
+  /** Async execution status. Absent on legacy sample runs (treated as Complete). */
+  status?: EvalRunStatus;
+  jobId?: string;
+  evalId?: string;
+  promptfooBaseUrl?: string;
+  errorMessage?: string;
 }
 
 export const DETERMINISTIC_ASSERTIONS: AssertionType[] = [
@@ -292,10 +300,15 @@ export const ASSERTION_INFO: Record<AssertionType, { description: string; whenTo
   },
 };
 
+/** Demo: first entry is PS “current” placeholders; remainder fill “last 50 projects” preload. */
 export const SAMPLE_PROMPT_PROJECTS = [
   { id: '{{currentPromptProjectId}}', name: 'Current Prompt Project' },
   { id: '1234', name: 'Sample Project 1234' },
   { id: '2735', name: 'CRM Email Project' },
+  ...Array.from({ length: 47 }, (_, i) => ({
+    id: String(10000 + i),
+    name: `Prompt Project ${10000 + i}`,
+  })),
 ];
 
 export const SAMPLE_PROMPT_VERSIONS: Record<string, { id: string; name: string }[]> = {
@@ -398,6 +411,13 @@ export const JUDGE_MODELS = [
   { id: 'openai:gpt-4.1-2025-04-14', name: 'GPT-4.1' },
   { id: 'anthropic:claude-opus-4', name: 'Claude Opus 4' },
   { id: 'anthropic:claude-sonnet-4', name: 'Claude Sonnet 4' },
+];
+
+export const GENERATION_MODELS = [
+  { id: 'gpt-4.1-2025-04-14', name: 'GPT-4.1' },
+  { id: 'gpt-4.1-mini-2025-04-14', name: 'GPT-4.1 Mini' },
+  { id: 'gpt-4.1-nano-2025-04-14', name: 'GPT-4.1 Nano' },
+  { id: 'o3-mini', name: 'o3-mini' },
 ];
 
 export const ASSERTION_CATEGORIES: Record<string, AssertionType[]> = {

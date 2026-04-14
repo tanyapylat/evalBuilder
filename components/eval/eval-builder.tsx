@@ -5,6 +5,8 @@ import { ConfigSidebar } from './config-sidebar';
 import { MainEditor } from './main-editor';
 import { EvalRunsSidebar } from './eval-runs-sidebar';
 import { EvalProvider } from '@/lib/eval-store';
+import { PromptCatalogProvider } from '@/lib/prompt-catalog';
+import { PromptDraftsProvider } from '@/lib/prompt-drafts-context';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import {
   ResizableHandle,
@@ -18,8 +20,10 @@ export function EvalBuilder() {
 
   return (
     <EvalProvider>
+      <PromptCatalogProvider>
+      <PromptDraftsProvider>
       <TooltipProvider>
-        <ResizablePanelGroup direction="horizontal" className="h-screen">
+        <ResizablePanelGroup direction="horizontal" className="h-screen min-h-0 overflow-hidden">
           {/* Left Sidebar - Configurations */}
           <ResizablePanel 
             defaultSize={15} 
@@ -62,6 +66,8 @@ export function EvalBuilder() {
           </ResizablePanel>
         </ResizablePanelGroup>
       </TooltipProvider>
+      </PromptDraftsProvider>
+      </PromptCatalogProvider>
     </EvalProvider>
   );
 }

@@ -75,7 +75,8 @@
 }
 
 @theme inline {
-  --font-sans: 'Geist', 'Geist Fallback';
+  /* Match app/globals.css — Prompt Studio (JustAnswer) stack */
+  --font-sans: Helvetica, Arial, 'Lucida Grande', sans-serif;
   --font-mono: 'Geist Mono', 'Geist Mono Fallback';
   --color-background: var(--background);
   --color-foreground: var(--foreground);

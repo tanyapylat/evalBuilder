@@ -24,6 +24,8 @@ export interface TestCaseSuggestion {
   vars: Record<string, string>;
   tag: 'normal' | 'edge';
   description: string;
+  category?: string;
+  expectedFocus?: string;
 }
 
 // Mock AI generation functions - in production these would call an actual AI API

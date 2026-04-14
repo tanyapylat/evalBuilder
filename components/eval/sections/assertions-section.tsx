@@ -1,447 +1,333 @@
 'use client';
 
-import { useState } from 'react';
-import { Plus, Trash2, Copy, GripVertical, Info, ChevronDown, ChevronUp, Lightbulb, Sparkles, Wand2, ArrowRightLeft, HelpCircle, Check, X, MoreVertical } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import {
+  Plus,
+  Trash2,
+  Copy,
+  GripVertical,
+  Info,
+  ChevronDown,
+  ChevronUp,
+  Sparkles,
+  Check,
+  X,
+  Search,
+  Bot,
+  RefreshCw,
+} from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
+import { Badge } from '@/components/ui/badge';
+import { toast } from 'sonner';
 import { useEval } from '@/lib/eval-store';
-import { 
-  DETERMINISTIC_ASSERTIONS, 
-  LLM_ASSERTIONS, 
-  ASSERTION_INFO, 
+import { usePromptCatalog } from '@/lib/prompt-catalog';
+import { usePromptDrafts } from '@/lib/prompt-drafts-context';
+import {
+  DETERMINISTIC_ASSERTIONS,
+  LLM_ASSERTIONS,
+  ASSERTION_INFO,
+  ASSERTION_CATEGORIES,
   JUDGE_MODELS,
-  type Assertion, 
+  type Assertion,
   type AssertionType,
+  type EvalConfig,
   type JudgeProviderConfig,
 } from '@/lib/eval-types';
 import { generateId } from '@/lib/yaml-utils';
 import { cn } from '@/lib/utils';
-import { 
-  generateAssertionSuggestions, 
-  improveAssertion, 
-  convertAssertion, 
-  explainAssertion,
-  type AssertionSuggestion,
-  type AssertionImprovement,
-} from '@/lib/ai-assistance';
+import { type AssertionSuggestion } from '@/lib/ai-assistance';
 
-// Guidance questions for assertion advisor
-const GUIDANCE_QUESTIONS = [
-  {
-    question: 'Do you know the exact expected output?',
-    yesRecommendation: 'deterministic',
-    noRecommendation: null,
-  },
-  {
-    question: 'Are you checking for presence or absence of specific terms?',
-    yesRecommendation: 'deterministic',
-    noRecommendation: null,
-  },
-  {
-    question: 'Are you checking format, length, or structure?',
-    yesRecommendation: 'deterministic',
-    noRecommendation: null,
-  },
-  {
-    question: 'Are you checking subjective quality like tone, clarity, or helpfulness?',
-    yesRecommendation: 'llm',
-    noRecommendation: 'deterministic',
-  },
+// ─── Type helpers ─────────────────────────────────────────────────────────────
+
+const ARRAY_TYPES: AssertionType[] = [
+  'contains-all',
+  'contains-any',
+  'icontains-all',
+  'icontains-any',
+  'not-contains-all',
+  'not-contains-any',
+  'not-icontains-any',
+];
+const NUMERIC_TYPES: AssertionType[] = ['cost', 'latency', 'levenshtein'];
+const NO_VALUE_TYPES: AssertionType[] = [
+  'is-json',
+  'contains-json',
+  'model-graded-factuality',
+  'model-graded-closedqa',
+  'answer-relevance',
 ];
 
-// AI Action Modal for assertion improvements
-function AIActionModal({ 
-  open, 
-  onOpenChange, 
-  title,
-  improvement,
-  onApply,
-}: { 
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  title: string;
-  improvement: AssertionImprovement | null;
-  onApply: (assertion: Assertion) => void;
+const isArrayType = (t: AssertionType) => ARRAY_TYPES.includes(t);
+const isNumericType = (t: AssertionType) => NUMERIC_TYPES.includes(t);
+const isWordCountType = (t: AssertionType) => t === 'wordCount';
+const isNoValueType = (t: AssertionType) => NO_VALUE_TYPES.includes(t);
+
+// ─── Short value preview for collapsed header ─────────────────────────────────
+
+function getValuePreview(a: Assertion): string {
+  if (isNoValueType(a.type)) return '';
+  if (a.type === 'wordCount') {
+    try {
+      const p = JSON.parse(String(a.value)) as { min?: number; max?: number };
+      const parts: string[] = [];
+      if (p.min !== undefined) parts.push(`min ${p.min}`);
+      if (p.max !== undefined) parts.push(`max ${p.max}`);
+      return parts.join(', ');
+    } catch {
+      return String(a.value ?? '');
+    }
+  }
+  if (Array.isArray(a.value)) {
+    const preview = a.value.slice(0, 2).join(', ');
+    return a.value.length > 2 ? `${preview} +${a.value.length - 2} more` : preview;
+  }
+  const str = String(a.value ?? '');
+  return str.length > 60 ? str.slice(0, 60) + '…' : str;
+}
+
+// ─── Array tag builder ────────────────────────────────────────────────────────
+
+function ArrayValueEditor({
+  value,
+  onChange,
+}: {
+  value: string[];
+  onChange: (v: string[]) => void;
 }) {
-  if (!improvement) return null;
+  const [inputVal, setInputVal] = useState('');
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-primary" />
-            {title}
-          </DialogTitle>
-          <DialogDescription>
-            Review the suggested changes before applying
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-4 py-4">
-          <Alert className="bg-muted/50">
-            <Info className="h-4 w-4" />
-            <AlertDescription>{improvement.explanation}</AlertDescription>
-          </Alert>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label className="text-sm font-medium text-muted-foreground">Current Version</Label>
-              <div className="rounded-lg border border-border bg-muted/30 p-3">
-                <div className="text-sm font-mono">
-                  <div><span className="text-muted-foreground">type:</span> {improvement.original.type}</div>
-                  {improvement.original.metric && <div><span className="text-muted-foreground">metric:</span> {improvement.original.metric}</div>}
-                  <div className="mt-2 text-xs text-muted-foreground line-clamp-3">
-                    {String(improvement.original.value || '').substring(0, 100)}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-sm font-medium text-primary">Suggested Version</Label>
-              <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
-                <div className="text-sm font-mono">
-                  <div><span className="text-muted-foreground">type:</span> {improvement.suggested.type}</div>
-                  {improvement.suggested.metric && <div><span className="text-muted-foreground">metric:</span> {improvement.suggested.metric}</div>}
-                  <div className="mt-2 text-xs text-muted-foreground line-clamp-3">
-                    {String(improvement.suggested.value || '').substring(0, 100)}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={() => { onApply(improvement.suggested); onOpenChange(false); }}>
-            <Check className="mr-2 h-4 w-4" />
-            Apply Changes
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// Explain Modal
-function ExplainModal({ 
-  open, 
-  onOpenChange, 
-  explanation,
-}: { 
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  explanation: string;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <HelpCircle className="h-5 w-5 text-primary" />
-            Assertion Explanation
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="py-4">
-          <p className="text-sm text-muted-foreground whitespace-pre-line">{explanation}</p>
-        </div>
-
-        <DialogFooter>
-          <Button onClick={() => onOpenChange(false)}>Close</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-interface AssertionEditorProps {
-  assertion: Assertion;
-  index: number;
-  onUpdate: (assertion: Assertion) => void;
-  onDelete: () => void;
-  onDuplicate: () => void;
-}
-
-function AssertionEditor({ assertion, index, onUpdate, onDelete, onDuplicate }: AssertionEditorProps) {
-  const [isExpanded, setIsExpanded] = useState(true);
-  const [aiModalOpen, setAiModalOpen] = useState(false);
-  const [aiModalTitle, setAiModalTitle] = useState('');
-  const [improvement, setImprovement] = useState<AssertionImprovement | null>(null);
-  const [explainModalOpen, setExplainModalOpen] = useState(false);
-  const [explanation, setExplanation] = useState('');
-  
-  const isLlmAssertion = LLM_ASSERTIONS.includes(assertion.type);
-  const info = ASSERTION_INFO[assertion.type];
-  const needsArrayValue = ['contains-all', 'contains-any', 'icontains-all', 'icontains-any', 'not-contains-all', 'not-contains-any', 'not-icontains-any'].includes(assertion.type);
-
-  const handleImprove = () => {
-    const result = improveAssertion(assertion);
-    setImprovement(result);
-    setAiModalTitle('Improve Assertion');
-    setAiModalOpen(true);
-  };
-
-  const handleConvert = () => {
-    const result = convertAssertion(assertion);
-    setImprovement(result);
-    setAiModalTitle(isLlmAssertion ? 'Convert to Deterministic' : 'Convert to LLM');
-    setAiModalOpen(true);
-  };
-
-  const handleExplain = () => {
-    const result = explainAssertion(assertion);
-    setExplanation(result);
-    setExplainModalOpen(true);
-  };
-
-  const handleValueChange = (value: string) => {
-    if (needsArrayValue) {
-      const arrayValue = value.split('\n').filter(v => v.trim());
-      onUpdate({ ...assertion, value: arrayValue });
-    } else {
-      onUpdate({ ...assertion, value });
+  const addItem = () => {
+    const trimmed = inputVal.trim();
+    if (trimmed && !value.includes(trimmed)) {
+      onChange([...value, trimmed]);
+      setInputVal('');
     }
   };
 
-  const displayValue = Array.isArray(assertion.value) 
-    ? assertion.value.join('\n') 
-    : String(assertion.value || '');
-
   return (
-    <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
-      <div className="rounded-lg border border-border bg-card">
-        <CollapsibleTrigger asChild>
-          <div className="flex items-center gap-3 p-3 cursor-pointer hover:bg-muted/50">
-            <GripVertical className="h-4 w-4 text-muted-foreground cursor-grab" />
-            <div className="flex-1 flex items-center gap-3">
-              <span className={cn(
-                'rounded px-2 py-0.5 text-xs font-medium',
-                isLlmAssertion 
-                  ? 'bg-primary/10 text-primary' 
-                  : 'bg-accent/10 text-accent-foreground'
-              )}>
-                {isLlmAssertion ? 'LLM' : 'Deterministic'}
-              </span>
-              <span className="font-medium text-sm">{assertion.type}</span>
-              {assertion.metric && (
-                <span className="text-sm text-muted-foreground">({assertion.metric})</span>
-              )}
-            </div>
-            <div className="flex items-center gap-1">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => e.stopPropagation()}>
-                    <Sparkles className="h-4 w-4 text-primary" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={handleImprove}>
-                    <Wand2 className="mr-2 h-4 w-4" />
-                    Improve assertion
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleConvert}>
-                    <ArrowRightLeft className="mr-2 h-4 w-4" />
-                    Convert to {isLlmAssertion ? 'Deterministic' : 'LLM'}
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleExplain}>
-                    <HelpCircle className="mr-2 h-4 w-4" />
-                    Explain
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); onDuplicate(); }}>
-                <Copy className="h-4 w-4" />
-              </Button>
-              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={(e) => { e.stopPropagation(); onDelete(); }}>
-                <Trash2 className="h-4 w-4" />
-              </Button>
-              {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </div>
-          </div>
-        </CollapsibleTrigger>
-
-        <CollapsibleContent>
-          <div className="border-t border-border p-4 space-y-4">
-            {info && (
-              <Alert className="bg-muted/50 border-muted">
-                <Info className="h-4 w-4" />
-                <AlertDescription className="text-sm">
-                  <strong>What it checks:</strong> {info.description}<br />
-                  <strong>When to use:</strong> {info.whenToUse}
-                </AlertDescription>
-              </Alert>
-            )}
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label className="text-sm font-medium">Assertion Type</Label>
-                <Select
-                  value={assertion.type}
-                  onValueChange={(value: AssertionType) => onUpdate({ ...assertion, type: value })}
-                >
-                  <SelectTrigger className="mt-1.5">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">Deterministic</div>
-                    {DETERMINISTIC_ASSERTIONS.map((type) => (
-                      <SelectItem key={type} value={type}>
-                        {type}
-                      </SelectItem>
-                    ))}
-                    <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">LLM as Judge</div>
-                    {LLM_ASSERTIONS.map((type) => (
-                      <SelectItem key={type} value={type}>
-                        {type}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label className="text-sm font-medium">Metric Name (Optional)</Label>
-                <Input
-                  value={assertion.metric || ''}
-                  onChange={(e) => onUpdate({ ...assertion, metric: e.target.value || undefined })}
-                  placeholder="e.g., SL brevity"
-                  className="mt-1.5"
-                />
-              </div>
-            </div>
-
-            <div>
-              <Label className="text-sm font-medium">
-                {isLlmAssertion ? 'Rubric / Prompt' : 'Value'}
-                {needsArrayValue && ' (one per line)'}
-              </Label>
-              <Textarea
-                value={displayValue}
-                onChange={(e) => handleValueChange(e.target.value)}
-                placeholder={isLlmAssertion 
-                  ? 'Enter the rubric or criteria for the LLM judge...'
-                  : needsArrayValue 
-                    ? 'Enter values, one per line...'
-                    : 'Enter the expected value...'
-                }
-                className="mt-1.5 min-h-24 font-mono text-sm"
-              />
-            </div>
-
-            {isLlmAssertion && (
-              <JudgeSettings assertion={assertion} onUpdate={onUpdate} />
-            )}
-
-            {assertion.type === 'similar' && (
-              <div>
-                <Label className="text-sm font-medium">Similarity Threshold (0-1)</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={1}
-                  step={0.1}
-                  value={assertion.threshold || 0.8}
-                  onChange={(e) => onUpdate({ ...assertion, threshold: parseFloat(e.target.value) })}
-                  className="mt-1.5 w-32"
-                />
-              </div>
-            )}
-          </div>
-        </CollapsibleContent>
+    <div className="space-y-2">
+      <div className="min-h-9 flex flex-wrap gap-1.5 rounded-md border border-input bg-transparent px-3 py-2">
+        {value.map((item, i) => (
+          <span
+            key={i}
+            className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-xs"
+          >
+            {item}
+            <button
+              type="button"
+              onClick={() => onChange(value.filter((_, j) => j !== i))}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        ))}
+        {value.length === 0 && (
+          <span className="text-xs text-muted-foreground self-center">
+            No items yet — add below
+          </span>
+        )}
       </div>
-
-      <AIActionModal
-        open={aiModalOpen}
-        onOpenChange={setAiModalOpen}
-        title={aiModalTitle}
-        improvement={improvement}
-        onApply={onUpdate}
-      />
-
-      <ExplainModal
-        open={explainModalOpen}
-        onOpenChange={setExplainModalOpen}
-        explanation={explanation}
-      />
-    </Collapsible>
+      <div className="flex gap-2">
+        <Input
+          value={inputVal}
+          onChange={(e) => setInputVal(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              addItem();
+            }
+          }}
+          placeholder="Type an item and press Enter"
+          className="h-8 text-sm"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={addItem}
+          disabled={!inputVal.trim()}
+        >
+          Add
+        </Button>
+      </div>
+    </div>
   );
 }
 
-function JudgeSettings({ assertion, onUpdate }: { assertion: Assertion; onUpdate: (a: Assertion) => void }) {
-  const provider = assertion.provider || {
+// ─── Word count min/max editor ────────────────────────────────────────────────
+
+function WordCountEditor({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  let parsed: { min?: number; max?: number } = {};
+  try {
+    parsed = JSON.parse(value) as { min?: number; max?: number };
+  } catch { /* empty */ }
+
+  const update = (min?: number, max?: number) =>
+    onChange(
+      JSON.stringify({
+        ...(min !== undefined ? { min } : {}),
+        ...(max !== undefined ? { max } : {}),
+      }),
+    );
+
+  return (
+    <div className="flex gap-4">
+      <div className="flex-1">
+        <Label className="text-xs font-medium text-muted-foreground">Min words</Label>
+        <Input
+          type="number"
+          min={0}
+          value={parsed.min ?? ''}
+          onChange={(e) =>
+            update(e.target.value ? parseInt(e.target.value) : undefined, parsed.max)
+          }
+          placeholder="0"
+          className="mt-1.5 h-9"
+        />
+      </div>
+      <div className="flex-1">
+        <Label className="text-xs font-medium text-muted-foreground">Max words</Label>
+        <Input
+          type="number"
+          min={0}
+          value={parsed.max ?? ''}
+          onChange={(e) =>
+            update(parsed.min, e.target.value ? parseInt(e.target.value) : undefined)
+          }
+          placeholder="unlimited"
+          className="mt-1.5 h-9"
+        />
+      </div>
+    </div>
+  );
+}
+
+// ─── Judge model settings ─────────────────────────────────────────────────────
+
+function JudgeSettings({
+  assertion,
+  onUpdate,
+}: {
+  assertion: Assertion;
+  onUpdate: (a: Assertion) => void;
+}) {
+  const provider: JudgeProviderConfig = assertion.provider ?? {
     id: 'openai:gpt-5-mini-2025-08-07',
     config: { max_tokens: 30000, temperature: 0 },
   };
 
-  const updateProvider = (updates: Partial<JudgeProviderConfig>) => {
+  const updateProvider = (updates: Partial<JudgeProviderConfig>) =>
     onUpdate({
       ...assertion,
       provider: { ...provider, ...updates } as JudgeProviderConfig,
     });
-  };
 
   return (
-    <div className="rounded-lg border border-dashed border-border p-4 space-y-4">
-      <div className="text-sm font-medium text-muted-foreground">Judge Model Settings</div>
-      
-      <div className="grid grid-cols-3 gap-4">
-        <div>
-          <Label className="text-sm font-medium">Model</Label>
+    <div className="rounded-lg border border-dashed border-border p-4 space-y-3">
+      <div className="text-sm font-medium text-foreground">
+        Judge Model Settings
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <div className="col-span-3 sm:col-span-1">
+          <Label className="text-xs font-medium text-muted-foreground">Model</Label>
           <Select
             value={provider.id}
-            onValueChange={(value) => updateProvider({ id: value })}
+            onValueChange={(v) => updateProvider({ id: v })}
           >
-            <SelectTrigger className="mt-1.5">
+            <SelectTrigger className="mt-1.5 h-9 text-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {JUDGE_MODELS.map((model) => (
-                <SelectItem key={model.id} value={model.id}>
-                  {model.name}
+              {JUDGE_MODELS.map((m) => (
+                <SelectItem key={m.id} value={m.id}>
+                  {m.name}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
-
         <div>
-          <Label className="text-sm font-medium">Max Tokens</Label>
+          <Label className="text-xs font-medium text-muted-foreground">Max Tokens</Label>
           <Input
             type="number"
             value={provider.config.max_tokens}
-            onChange={(e) => updateProvider({ 
-              config: { ...provider.config, max_tokens: parseInt(e.target.value) || 3000 } 
-            })}
-            className="mt-1.5"
+            onChange={(e) =>
+              updateProvider({
+                config: {
+                  ...provider.config,
+                  max_tokens: parseInt(e.target.value) || 3000,
+                },
+              })
+            }
+            className="mt-1.5 h-9 text-sm"
           />
         </div>
-
         <div>
-          <Label className="text-sm font-medium">Temperature</Label>
+          <Label className="text-xs font-medium text-muted-foreground">Temperature</Label>
           <Input
             type="number"
             min={0}
             max={2}
             step={0.1}
             value={provider.config.temperature}
-            onChange={(e) => updateProvider({ 
-              config: { ...provider.config, temperature: parseFloat(e.target.value) || 0 } 
-            })}
-            className="mt-1.5"
+            onChange={(e) =>
+              updateProvider({
+                config: {
+                  ...provider.config,
+                  temperature: parseFloat(e.target.value) || 0,
+                },
+              })
+            }
+            className="mt-1.5 h-9 text-sm"
           />
         </div>
       </div>
@@ -449,320 +335,620 @@ function JudgeSettings({ assertion, onUpdate }: { assertion: Assertion; onUpdate
   );
 }
 
-function AddAssertionDialog({ open, onOpenChange, onAdd }: { 
-  open: boolean; 
-  onOpenChange: (open: boolean) => void;
-  onAdd: (type: 'deterministic' | 'llm') => void;
-}) {
-  const [step, setStep] = useState<'choose' | 'advisor' | 'select'>('choose');
-  const [advisorIndex, setAdvisorIndex] = useState(0);
-  const [recommendation, setRecommendation] = useState<'deterministic' | 'llm' | null>(null);
+// ─── Inline assertion editor ──────────────────────────────────────────────────
 
-  const handleChoose = (type: 'deterministic' | 'llm') => {
-    onAdd(type);
-    onOpenChange(false);
-    setStep('choose');
-  };
+interface AssertionEditorProps {
+  assertion: Assertion;
+  index: number;
+  isNew?: boolean;
+  bulkToggle: { id: number; expanded: boolean };
+  onUpdate: (assertion: Assertion) => void;
+  onDelete: () => void;
+  onDuplicate: () => void;
+}
 
-  const handleAdvisorAnswer = (answer: 'yes' | 'no') => {
-    const question = GUIDANCE_QUESTIONS[advisorIndex];
-    const rec = answer === 'yes' ? question.yesRecommendation : question.noRecommendation;
-    
-    if (rec) {
-      setRecommendation(rec as 'deterministic' | 'llm');
-      setStep('select');
-    } else if (advisorIndex < GUIDANCE_QUESTIONS.length - 1) {
-      setAdvisorIndex(advisorIndex + 1);
-    } else {
-      setRecommendation('deterministic');
-      setStep('select');
+function AssertionEditor({
+  assertion,
+  index,
+  isNew,
+  bulkToggle,
+  onUpdate,
+  onDelete,
+  onDuplicate,
+}: AssertionEditorProps) {
+  const [isExpanded, setIsExpanded] = useState(true);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const metricInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setIsExpanded(bulkToggle.expanded);
+  }, [bulkToggle.id]);
+
+  // Scroll into view and focus metric name when freshly created
+  useEffect(() => {
+    if (isNew) {
+      containerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      // Small delay lets the DOM settle before focusing
+      const t = setTimeout(() => metricInputRef.current?.focus(), 120);
+      return () => clearTimeout(t);
     }
+  }, [isNew]);
+
+  const isLlm = LLM_ASSERTIONS.includes(assertion.type);
+  const info = ASSERTION_INFO[assertion.type];
+  const preview = getValuePreview(assertion);
+
+  // ── Assertion type change ───────────────────────────────────────────────────
+  const handleTypeChange = (newType: AssertionType) => {
+    const wasArray = isArrayType(assertion.type);
+    const willBeArray = isArrayType(newType);
+    const willBeNoValue = isNoValueType(newType);
+    onUpdate({
+      ...assertion,
+      type: newType,
+      value: willBeNoValue
+        ? ''
+        : wasArray && !willBeArray
+          ? ''
+          : !wasArray && willBeArray
+            ? []
+            : assertion.value,
+    });
   };
 
-  const resetDialog = () => {
-    setStep('choose');
-    setAdvisorIndex(0);
-    setRecommendation(null);
-  };
+  // ── Deterministic categories (exclude LLM as Judge) ────────────────────────
+  const deterministicCategories = Object.entries(ASSERTION_CATEGORIES).filter(
+    ([cat]) => cat !== 'LLM as Judge',
+  );
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) resetDialog(); }}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Add Assertion</DialogTitle>
-          <DialogDescription>
-            {step === 'choose' && 'Choose how to add your assertion'}
-            {step === 'advisor' && 'Answer a few questions to find the best assertion type'}
-            {step === 'select' && 'Select your assertion type'}
-          </DialogDescription>
-        </DialogHeader>
+    <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
+      <div ref={containerRef} className="rounded-lg border border-border bg-card">
 
-        {step === 'choose' && (
-          <div className="space-y-3 py-4">
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-3 h-auto p-4"
-              onClick={() => handleChoose('deterministic')}
-            >
-              <div className="flex h-10 w-10 items-center justify-center rounded bg-accent/10">
-                <span className="text-lg">🔍</span>
-              </div>
-              <div className="text-left">
-                <div className="font-medium">Add Deterministic Assertion</div>
-                <div className="text-sm text-muted-foreground">
-                  For exact matches, contains checks, regex, banned terms, etc.
-                </div>
-              </div>
-            </Button>
+        {/* ── Collapsed header / trigger ── */}
+        <CollapsibleTrigger asChild>
+          <div className="flex cursor-pointer items-center gap-3 p-3 hover:bg-muted/50">
+            <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-muted-foreground/40" />
 
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-3 h-auto p-4"
-              onClick={() => handleChoose('llm')}
-            >
-              <div className="flex h-10 w-10 items-center justify-center rounded bg-primary/10">
-                <span className="text-lg">🤖</span>
-              </div>
-              <div className="text-left">
-                <div className="font-medium">Add LLM as Judge</div>
-                <div className="text-sm text-muted-foreground">
-                  For subjective quality checks (tone, clarity, helpfulness)
-                </div>
-              </div>
-            </Button>
-
-            <div className="relative py-2">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t" />
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-background px-2 text-muted-foreground">or</span>
-              </div>
+            <div className="flex flex-1 items-center gap-2 min-w-0">
+              <Badge
+                variant="outline"
+                className={cn(
+                  'shrink-0 text-xs font-normal',
+                  isLlm
+                    ? 'border-primary/30 bg-primary/5 text-primary'
+                    : 'border-muted-foreground/30 bg-muted/50',
+                )}
+              >
+                {isLlm ? 'LLM' : 'Deterministic'}
+              </Badge>
+              <span className="text-sm font-medium">{assertion.type}</span>
+              {assertion.metric && (
+                <span className="truncate text-xs text-muted-foreground">
+                  · {assertion.metric}
+                </span>
+              )}
+              {!isExpanded && preview && (
+                <span className="truncate text-xs text-muted-foreground">
+                  — {preview}
+                </span>
+              )}
             </div>
 
-            <Button
-              variant="ghost"
-              className="w-full text-muted-foreground"
-              onClick={() => setStep('advisor')}
-            >
-              <Lightbulb className="mr-2 h-4 w-4" />
-              Not sure? Let me help you choose
-            </Button>
-          </div>
-        )}
-
-        {step === 'advisor' && (
-          <div className="space-y-4 py-4">
-            <div className="text-center">
-              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-muted">
-                <Lightbulb className="h-8 w-8 text-muted-foreground" />
-              </div>
-              <p className="text-lg font-medium">{GUIDANCE_QUESTIONS[advisorIndex].question}</p>
-            </div>
-            <div className="flex gap-3 justify-center">
-              <Button onClick={() => handleAdvisorAnswer('yes')}>Yes</Button>
-              <Button variant="outline" onClick={() => handleAdvisorAnswer('no')}>No</Button>
-            </div>
-            <div className="text-center text-sm text-muted-foreground">
-              Question {advisorIndex + 1} of {GUIDANCE_QUESTIONS.length}
-            </div>
-          </div>
-        )}
-
-        {step === 'select' && recommendation && (
-          <div className="space-y-4 py-4">
-            <Alert className={cn(
-              recommendation === 'llm' ? 'bg-primary/5 border-primary/20' : 'bg-accent/5 border-accent/20'
-            )}>
-              <AlertDescription>
-                Based on your answers, we recommend using{' '}
-                <strong>{recommendation === 'llm' ? 'LLM as Judge' : 'Deterministic'}</strong> assertions.
-              </AlertDescription>
-            </Alert>
-
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setStep('choose')}>
-                Back
+            <div className="flex shrink-0 items-center gap-0.5">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={(e) => { e.stopPropagation(); onDuplicate(); }}
+                title="Duplicate"
+              >
+                <Copy className="h-4 w-4" />
               </Button>
-              <Button onClick={() => handleChoose(recommendation)}>
-                Add {recommendation === 'llm' ? 'LLM Rubric' : 'Deterministic'} Assertion
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-destructive hover:text-destructive"
+                onClick={(e) => { e.stopPropagation(); onDelete(); }}
+                title="Delete"
+              >
+                <Trash2 className="h-4 w-4" />
               </Button>
-            </DialogFooter>
+              {isExpanded
+                ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                : <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              }
+            </div>
           </div>
-        )}
-      </DialogContent>
-    </Dialog>
+        </CollapsibleTrigger>
+
+        {/* ── Expanded form ── */}
+        <CollapsibleContent>
+          <div className="border-t border-border p-4 space-y-4">
+
+            {/* Metric name */}
+            <div>
+              <Label className="text-xs font-medium text-muted-foreground">
+                Metric Name{' '}
+                <span className="font-normal">(optional)</span>
+              </Label>
+              <Input
+                ref={metricInputRef}
+                value={assertion.metric ?? ''}
+                onChange={(e) =>
+                  onUpdate({ ...assertion, metric: e.target.value || undefined })
+                }
+                placeholder="e.g., SL tone, Brevity score"
+                className="mt-1.5"
+              />
+            </div>
+
+            {/* ── Deterministic fields ── */}
+            {!isLlm && (
+              <>
+                {/* 3. Assertion type selector */}
+                <div>
+                  <Label className="text-xs font-medium text-muted-foreground">Assertion Type</Label>
+                  <Select
+                    value={assertion.type}
+                    onValueChange={(v) => handleTypeChange(v as AssertionType)}
+                  >
+                    <SelectTrigger className="mt-1.5 h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {deterministicCategories.map(([cat, types]) => (
+                        <SelectGroup key={cat}>
+                          <SelectLabel>{cat}</SelectLabel>
+                          {types.map((t) => (
+                            <SelectItem key={t} value={t}>
+                              {t}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {/* Info alert */}
+                  {info && (
+                    <Alert className="mt-2 border-muted bg-muted/40 px-3 py-2">
+                      <Info className="h-3.5 w-3.5" />
+                      <AlertDescription className="text-xs">
+                        <span className="font-medium text-foreground">
+                          {info.description}
+                        </span>
+                        <span className="text-muted-foreground">
+                          {' '}· {info.whenToUse}
+                        </span>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+
+                {/* 4. Value field */}
+                {!isNoValueType(assertion.type) && (
+                  <div>
+                    <Label className="text-xs font-medium text-muted-foreground">
+                      {isArrayType(assertion.type)
+                        ? 'Values'
+                        : isWordCountType(assertion.type)
+                          ? 'Word Count Range'
+                          : 'Value'}
+                    </Label>
+
+                    {isArrayType(assertion.type) ? (
+                      <div className="mt-1.5">
+                        <ArrayValueEditor
+                          value={Array.isArray(assertion.value) ? assertion.value : []}
+                          onChange={(v) => onUpdate({ ...assertion, value: v })}
+                        />
+                      </div>
+                    ) : isWordCountType(assertion.type) ? (
+                      <div className="mt-1.5">
+                        <WordCountEditor
+                          value={typeof assertion.value === 'string' ? assertion.value : ''}
+                          onChange={(v) => onUpdate({ ...assertion, value: v })}
+                        />
+                      </div>
+                    ) : isNumericType(assertion.type) ? (
+                      <Input
+                        type="number"
+                        value={
+                          typeof assertion.value === 'number'
+                            ? assertion.value
+                            : typeof assertion.value === 'string'
+                              ? assertion.value
+                              : ''
+                        }
+                        onChange={(e) =>
+                          onUpdate({
+                            ...assertion,
+                            value: e.target.value
+                              ? parseFloat(e.target.value)
+                              : ('' as unknown as number),
+                          })
+                        }
+                        placeholder="Enter threshold value"
+                        className="mt-1.5"
+                      />
+                    ) : (
+                      <Textarea
+                        value={
+                          typeof assertion.value === 'string'
+                            ? assertion.value
+                            : String(assertion.value ?? '')
+                        }
+                        onChange={(e) =>
+                          onUpdate({ ...assertion, value: e.target.value })
+                        }
+                        placeholder={info?.example ?? 'Enter expected value…'}
+                        className="mt-1.5 min-h-[80px] font-mono text-sm"
+                      />
+                    )}
+                  </div>
+                )}
+
+                {/* Similarity threshold */}
+                {assertion.type === 'similar' && (
+                  <div>
+                    <Label className="text-xs font-medium text-muted-foreground">
+                      Similarity Threshold{' '}
+                      <span className="font-normal">(0 – 1)</span>
+                    </Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={assertion.threshold ?? 0.8}
+                      onChange={(e) =>
+                        onUpdate({ ...assertion, threshold: parseFloat(e.target.value) })
+                      }
+                      className="mt-1.5 w-32"
+                    />
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* ── LLM as Judge fields ── */}
+            {isLlm && (
+              <>
+                {/* Rubric */}
+                <div>
+                  <Label className="text-xs font-medium text-muted-foreground">
+                    Rubric / Instructions
+                  </Label>
+                  <Textarea
+                    value={
+                      typeof assertion.value === 'string'
+                        ? assertion.value
+                        : String(assertion.value ?? '')
+                    }
+                    onChange={(e) =>
+                      onUpdate({ ...assertion, value: e.target.value })
+                    }
+                    placeholder={'Describe what the LLM judge should check.\n\nExample: "PASS only if the response is friendly, professional, and directly addresses the user\'s question."'}
+                    className="mt-1.5 min-h-[120px]"
+                  />
+                </div>
+
+                {/* Judge model settings */}
+                <JudgeSettings assertion={assertion} onUpdate={onUpdate} />
+              </>
+            )}
+
+          </div>
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
   );
 }
 
-// Generate Assertions Dialog
-function GenerateAssertionsDialog({ 
-  open, 
+// ─── Generate Assertions Dialog ───────────────────────────────────────────────
+
+function buildTestsSummary(tests: EvalConfig['tests']): string | undefined {
+  if (typeof tests === 'string') {
+    return tests.trim() ? `External dataset URL or path: ${tests}` : undefined;
+  }
+  if (tests.length === 0) return undefined;
+  return JSON.stringify(
+    tests.map((t) => ({
+      description: t.description,
+      vars: t.vars,
+    })),
+    null,
+    2,
+  );
+}
+
+function assertionsFromSuggestions(suggestions: AssertionSuggestion[]): Assertion[] {
+  return suggestions.map((s) => {
+    const isLlmJudge = LLM_ASSERTIONS.includes(s.assertionType);
+    return {
+      id: generateId(),
+      type: s.assertionType,
+      metric: s.metric,
+      value: s.value,
+      ...(isLlmJudge
+        ? {
+            provider: {
+              id: 'openai:gpt-5-mini-2025-08-07',
+              config: { max_tokens: 30000, temperature: 0 },
+            },
+          }
+        : {}),
+    };
+  });
+}
+
+function GenerateAssertionsDialog({
+  open,
   onOpenChange,
   onAccept,
-}: { 
-  open: boolean; 
+  mode,
+}: {
+  open: boolean;
   onOpenChange: (open: boolean) => void;
-  onAccept: (assertions: Assertion[]) => void;
+  onAccept: (assertions: Assertion[], mode: 'add' | 'replace') => void;
+  mode: 'generate' | 'additional' | 'regenerate';
 }) {
   const { config } = useEval();
-  const [suggestions, setSuggestions] = useState<AssertionSuggestion[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const { loadPromptVersionContent } = usePromptCatalog();
+  const { getLivePromptContent } = usePromptDrafts();
   const [isGenerating, setIsGenerating] = useState(false);
+  const [instructions, setInstructions] = useState('');
 
-  const handleGenerate = () => {
-    setIsGenerating(true);
-    // Simulate AI generation delay
-    setTimeout(() => {
-      const tests = typeof config.tests === 'string' ? [] : config.tests;
-      const result = generateAssertionSuggestions(config.prompts, tests, config.defaultTest.assert);
-      setSuggestions(result);
-      setSelected(new Set(result.map(s => s.id)));
-      setIsGenerating(false);
-    }, 1000);
-  };
-
-  const toggleSelection = (id: string) => {
-    const newSelected = new Set(selected);
-    if (newSelected.has(id)) {
-      newSelected.delete(id);
-    } else {
-      newSelected.add(id);
+  const handleGenerate = async () => {
+    if (config.prompts.length === 0) {
+      toast.error('Add at least one prompt in Prompt Source first.');
+      return;
     }
-    setSelected(newSelected);
-  };
 
-  const handleAccept = () => {
-    const acceptedAssertions: Assertion[] = suggestions
-      .filter(s => selected.has(s.id))
-      .map(s => ({
+    setIsGenerating(true);
+    try {
+      const promptsPayload = await Promise.all(
+        config.prompts.map(async (p) => {
+          const live = getLivePromptContent(p);
+          const content =
+            live ?? (await loadPromptVersionContent(p.promptId, p.versionId));
+          return {
+            label: p.label,
+            content,
+          };
+        }),
+      );
+
+      const existingAssertions = mode === 'regenerate'
+        ? []
+        : config.defaultTest.assert.map((a) => ({
+            type: a.type,
+            metric: a.metric,
+            value: a.value,
+          }));
+
+      const res = await fetch('/api/generate-assertions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompts: promptsPayload,
+          existingAssertions,
+          testsSummary: buildTestsSummary(config.tests),
+          instructions: instructions.trim() || undefined,
+        }),
+      });
+
+      const data = (await res.json()) as {
+        suggestions?: Array<
+          Omit<AssertionSuggestion, 'id'> & { assertionType: string }
+        >;
+        error?: string;
+      };
+
+      if (!res.ok || !data.suggestions) {
+        throw new Error(data.error ?? 'Assertion generation failed');
+      }
+
+      if (data.suggestions.length === 0) {
+        toast.warning('No assertions were returned. Check your prompt or try again.');
+        return;
+      }
+
+      const withIds: AssertionSuggestion[] = data.suggestions.map((s) => ({
         id: generateId(),
-        type: s.assertionType,
+        type: s.type,
+        assertionType: s.assertionType as AssertionSuggestion['assertionType'],
         metric: s.metric,
         value: s.value,
-        ...(s.type === 'llm' ? {
-          provider: {
-            id: 'openai:gpt-5-mini-2025-08-07',
-            config: { max_tokens: 30000, temperature: 0 },
-          },
-        } : {}),
+        explanation: s.explanation,
       }));
-    onAccept(acceptedAssertions);
-    onOpenChange(false);
-    setSuggestions([]);
-    setSelected(new Set());
+
+      const added = assertionsFromSuggestions(withIds);
+      const resolvedMode = mode === 'regenerate' ? 'replace' : 'add';
+      onAccept(added, resolvedMode);
+      const verb = mode === 'regenerate' ? 'Regenerated' : 'Added';
+      toast.success(`${verb} ${added.length} assertion${added.length === 1 ? '' : 's'}`);
+      onOpenChange(false);
+      setInstructions('');
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      toast.error(message);
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
+  const resetOnClose = () => {
+    setInstructions('');
+  };
+
+  const title = mode === 'regenerate'
+    ? 'Regenerate Assertions'
+    : mode === 'additional'
+      ? 'Generate Additional Assertions'
+      : 'Generate Assertions';
+
+  const description = mode === 'regenerate'
+    ? 'Replaces all existing assertions with a fresh set generated from your prompt.'
+    : 'Analyzes your Prompt Source text as written (saved or unsaved editor buffer), avoids overlap with existing assertions, and adds 3\u20135 assertions to the list below.';
+
+  const buttonLabel = mode === 'regenerate'
+    ? 'Regenerate assertions'
+    : 'Generate & add assertions';
+
+  const ButtonIcon = mode === 'regenerate' ? RefreshCw : Sparkles;
+
   return (
-    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) { setSuggestions([]); setSelected(new Set()); } }}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        onOpenChange(o);
+        if (!o) resetOnClose();
+      }}
+    >
+      <DialogContent className="flex max-h-[80vh] max-w-2xl flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-primary" />
-            Generate Assertions
+            <ButtonIcon className="h-5 w-5 text-primary" />
+            {title}
           </DialogTitle>
           <DialogDescription>
-            AI will analyze your prompts and dataset to suggest relevant assertions
+            {description}{' '}
+            Requires <code className="rounded bg-muted px-1 text-xs">OPENAI_API_KEY</code> on the server.
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 overflow-auto py-4">
-          {suggestions.length === 0 ? (
-            <div className="text-center py-8">
-              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-                <Sparkles className="h-8 w-8 text-primary" />
-              </div>
-              <p className="text-muted-foreground mb-4">
-                Click generate to get AI-suggested assertions based on your prompts and dataset
+          <div className="space-y-4 px-1 py-2">
+            {mode === 'regenerate' && (
+              <p className="text-center text-sm text-destructive">
+                All existing assertions will be replaced.
               </p>
+            )}
+            <p className="text-center text-sm text-muted-foreground">
+              Optional hints for the generator (tone, constraints, or assertion mix).
+            </p>
+            <div className="space-y-2">
+              <Label htmlFor="assertion-gen-instructions" className="text-xs font-medium text-muted-foreground">
+                Generation instructions (optional)
+              </Label>
+              <Textarea
+                id="assertion-gen-instructions"
+                placeholder="e.g. One rubric for instruction-following; one contains check for required disclaimer…"
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+                rows={3}
+                className="resize-none text-sm"
+              />
+            </div>
+            <div className="flex justify-center pt-1">
               <Button onClick={handleGenerate} disabled={isGenerating}>
                 {isGenerating ? (
-                  <>Generating...</>
+                  'Generating…'
                 ) : (
                   <>
-                    <Sparkles className="mr-2 h-4 w-4" />
-                    Generate Suggestions
+                    <ButtonIcon className="mr-2 h-4 w-4" />
+                    {buttonLabel}
                   </>
                 )}
               </Button>
             </div>
-          ) : (
-            <div className="space-y-3">
-              {suggestions.map((suggestion) => (
-                <div 
-                  key={suggestion.id}
-                  className={cn(
-                    "rounded-lg border p-4 cursor-pointer transition-colors",
-                    selected.has(suggestion.id) 
-                      ? "border-primary bg-primary/5" 
-                      : "border-border hover:border-muted-foreground"
-                  )}
-                  onClick={() => toggleSelection(suggestion.id)}
-                >
-                  <div className="flex items-start gap-3">
-                    <div className={cn(
-                      "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border",
-                      selected.has(suggestion.id) 
-                        ? "border-primary bg-primary text-primary-foreground" 
-                        : "border-muted-foreground"
-                    )}>
-                      {selected.has(suggestion.id) && <Check className="h-3 w-3" />}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className={cn(
-                          'rounded px-2 py-0.5 text-xs font-medium',
-                          suggestion.type === 'llm' 
-                            ? 'bg-primary/10 text-primary' 
-                            : 'bg-accent/10 text-accent-foreground'
-                        )}>
-                          {suggestion.type === 'llm' ? 'LLM' : 'Deterministic'}
-                        </span>
-                        <span className="text-sm font-medium">{suggestion.assertionType}</span>
-                      </div>
-                      <div className="text-sm font-medium text-foreground">{suggestion.metric}</div>
-                      <p className="text-sm text-muted-foreground mt-1">{suggestion.explanation}</p>
-                      <div className="mt-2 rounded bg-muted/50 p-2">
-                        <code className="text-xs text-muted-foreground line-clamp-2">
-                          {suggestion.value.substring(0, 100)}{suggestion.value.length > 100 ? '...' : ''}
-                        </code>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          </div>
         </div>
-
-        {suggestions.length > 0 && (
-          <DialogFooter className="border-t pt-4">
-            <div className="flex-1 text-sm text-muted-foreground">
-              {selected.size} of {suggestions.length} selected
-            </div>
-            <Button variant="outline" onClick={() => { setSuggestions([]); setSelected(new Set()); }}>
-              Regenerate
-            </Button>
-            <Button onClick={handleAccept} disabled={selected.size === 0}>
-              <Check className="mr-2 h-4 w-4" />
-              Accept Selected
-            </Button>
-          </DialogFooter>
-        )}
       </DialogContent>
     </Dialog>
   );
 }
 
-export function AssertionsSection() {
-  const { config, addAssertion, updateAssertion, deleteAssertion, duplicateAssertion } = useEval();
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [generateDialogOpen, setGenerateDialogOpen] = useState(false);
+// ─── Add Assertion Popover ────────────────────────────────────────────────────
 
-  const handleAddAssertion = (type: 'deterministic' | 'llm') => {
+function AddAssertionPopover({
+  onAdd,
+}: {
+  onAdd: (type: 'deterministic' | 'llm') => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const choose = (type: 'deterministic' | 'llm') => {
+    onAdd(type);
+    setOpen(false);
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm" className="gap-1.5">
+          <Plus className="h-4 w-4" />
+          Add Assertion
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-64 p-2" align="end">
+        <p className="px-2 pb-1.5 pt-0.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+          Add Assertion
+        </p>
+        <button
+          className="w-full flex items-start gap-3 rounded-md px-2 py-2.5 text-left hover:bg-muted transition-colors"
+          onClick={() => choose('deterministic')}
+        >
+          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted/50">
+            <Search className="h-3.5 w-3.5 text-foreground" />
+          </div>
+          <div>
+            <p className="text-sm font-medium leading-tight">Deterministic</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Exact match, keywords, formatting
+            </p>
+          </div>
+        </button>
+        <button
+          className="w-full flex items-start gap-3 rounded-md px-2 py-2.5 text-left hover:bg-muted transition-colors"
+          onClick={() => choose('llm')}
+        >
+          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-primary/30 bg-primary/5">
+            <Bot className="h-3.5 w-3.5 text-primary" />
+          </div>
+          <div>
+            <p className="text-sm font-medium leading-tight">LLM as Judge</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Tone, quality, subjective checks
+            </p>
+          </div>
+        </button>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// ─── AssertionsSection ────────────────────────────────────────────────────────
+
+export function AssertionsSection() {
+  const { config, addAssertion, updateAssertion, deleteAssertion, duplicateAssertion, replaceAllAssertions } =
+    useEval();
+  const [generateOpen, setGenerateOpen] = useState(false);
+  const [generateMode, setGenerateMode] = useState<'generate' | 'additional' | 'regenerate'>('generate');
+  const [newAssertionId, setNewAssertionId] = useState<string | null>(null);
+  const [bulkToggle, setBulkToggle] = useState({ id: 0, expanded: true });
+  const [pendingDeleteIndex, setPendingDeleteIndex] = useState<number | null>(null);
+
+  const collapseAllAssertions = () =>
+    setBulkToggle((t) => ({ id: t.id + 1, expanded: false }));
+  const expandAllAssertions = () =>
+    setBulkToggle((t) => ({ id: t.id + 1, expanded: true }));
+
+  const confirmDeleteAssertion = () => {
+    if (pendingDeleteIndex !== null) {
+      deleteAssertion(pendingDeleteIndex);
+      setPendingDeleteIndex(null);
+    }
+  };
+
+  const handleAdd = (type: 'deterministic' | 'llm') => {
+    const id = generateId();
     if (type === 'llm') {
       addAssertion({
-        id: generateId(),
+        id,
         type: 'llm-rubric',
         value: '',
         provider: {
@@ -772,67 +958,132 @@ export function AssertionsSection() {
       });
     } else {
       addAssertion({
-        id: generateId(),
-        type: 'equals',
+        id,
+        type: 'contains',
         value: '',
       });
     }
+    setNewAssertionId(id);
   };
 
-  const handleAcceptGeneratedAssertions = (assertions: Assertion[]) => {
-    assertions.forEach(assertion => addAssertion(assertion));
+  const handleAcceptGenerated = (assertions: Assertion[], mode: 'add' | 'replace') => {
+    if (mode === 'replace') {
+      replaceAllAssertions(assertions);
+    } else {
+      assertions.forEach((a) => addAssertion(a));
+    }
+  };
+
+  const openGenerate = (mode: 'generate' | 'additional' | 'regenerate') => {
+    setGenerateMode(mode);
+    setGenerateOpen(true);
   };
 
   const assertions = config.defaultTest.assert;
+  const hasAssertions = assertions.length > 0;
 
   return (
     <Card>
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="text-base font-medium">Assertions</CardTitle>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setGenerateDialogOpen(true)}
-              className="gap-1.5"
-            >
-              <Sparkles className="h-4 w-4" />
-              Generate Assertions
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setDialogOpen(true)}
-              className="gap-1.5"
-            >
-              <Plus className="h-4 w-4" />
-              Add Assertion
-            </Button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {hasAssertions && (
+              <div className="flex items-center gap-1 border-r border-border pr-2 mr-0.5">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 gap-1 px-2 text-xs"
+                  onClick={expandAllAssertions}
+                >
+                  <ChevronUp className="h-3.5 w-3.5" />
+                  Expand all
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 gap-1 px-2 text-xs"
+                  onClick={collapseAllAssertions}
+                >
+                  <ChevronDown className="h-3.5 w-3.5" />
+                  Collapse all
+                </Button>
+              </div>
+            )}
+            {hasAssertions ? (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openGenerate('additional')}
+                  className="gap-1.5"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  Generate More
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openGenerate('regenerate')}
+                  className="gap-1.5"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Regenerate
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => openGenerate('generate')}
+                className="gap-1.5"
+              >
+                <Sparkles className="h-4 w-4" />
+                Generate
+              </Button>
+            )}
+            <AddAssertionPopover onAdd={handleAdd} />
           </div>
         </div>
       </CardHeader>
+
       <CardContent>
         {assertions.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border p-6 text-center">
-            <p className="text-sm text-muted-foreground mb-3">
-              No assertions configured. Add assertions to define what to check in the output.
+          <div className="rounded-lg border border-dashed border-border px-6 py-8 text-center">
+            <p className="mb-4 text-sm text-muted-foreground">
+              No assertions yet
             </p>
-            <div className="flex gap-2 justify-center">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleAddAssertion('deterministic')}
+            <div className="flex justify-center gap-2">
+              <button
+                className="flex items-center gap-2.5 rounded-lg border border-border bg-card px-4 py-3 text-left hover:bg-muted transition-colors"
+                onClick={() => handleAdd('deterministic')}
               >
-                Add Deterministic
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleAddAssertion('llm')}
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted/50">
+                  <Search className="h-3.5 w-3.5 text-foreground" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Add Deterministic</p>
+                  <p className="text-xs text-muted-foreground">
+                    Exact match, keywords…
+                  </p>
+                </div>
+              </button>
+              <button
+                className="flex items-center gap-2.5 rounded-lg border border-border bg-card px-4 py-3 text-left hover:bg-muted transition-colors"
+                onClick={() => handleAdd('llm')}
               >
-                Add LLM Judge
-              </Button>
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-primary/30 bg-primary/5">
+                  <Bot className="h-3.5 w-3.5 text-primary" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Add LLM as Judge</p>
+                  <p className="text-xs text-muted-foreground">
+                    Tone, quality, subjective…
+                  </p>
+                </div>
+              </button>
             </div>
           </div>
         ) : (
@@ -842,8 +1093,10 @@ export function AssertionsSection() {
                 key={assertion.id}
                 assertion={assertion}
                 index={index}
+                isNew={assertion.id === newAssertionId}
+                bulkToggle={bulkToggle}
                 onUpdate={(updated) => updateAssertion(index, updated)}
-                onDelete={() => deleteAssertion(index)}
+                onDelete={() => setPendingDeleteIndex(index)}
                 onDuplicate={() => duplicateAssertion(index)}
               />
             ))}
@@ -851,17 +1104,49 @@ export function AssertionsSection() {
         )}
       </CardContent>
 
-      <AddAssertionDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        onAdd={handleAddAssertion}
+      <GenerateAssertionsDialog
+        open={generateOpen}
+        onOpenChange={setGenerateOpen}
+        onAccept={handleAcceptGenerated}
+        mode={generateMode}
       />
 
-      <GenerateAssertionsDialog
-        open={generateDialogOpen}
-        onOpenChange={setGenerateDialogOpen}
-        onAccept={handleAcceptGeneratedAssertions}
-      />
+      <AlertDialog
+        open={pendingDeleteIndex !== null}
+        onOpenChange={(open) => !open && setPendingDeleteIndex(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete assertion?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDeleteIndex !== null &&
+              assertions[pendingDeleteIndex] ? (
+                <>
+                  This removes the{' '}
+                  <span className="font-medium text-foreground">
+                    {assertions[pendingDeleteIndex].type}
+                  </span>
+                  {assertions[pendingDeleteIndex].metric
+                    ? ` (${assertions[pendingDeleteIndex].metric})`
+                    : ''}{' '}
+                  assertion. This cannot be undone.
+                </>
+              ) : (
+                'This assertion will be removed. This cannot be undone.'
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={confirmDeleteAssertion}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }
