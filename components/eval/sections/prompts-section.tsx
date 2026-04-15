@@ -1,11 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Plus, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Plus, Trash2, ChevronDown, ChevronRight, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   AlertDialog,
@@ -18,7 +18,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useEval } from '@/lib/eval-store';
-import { type PromptConfig } from '@/lib/eval-types';
+import { type PromptConfig, DEFAULT_VENDOR, DEFAULT_MODEL, DEFAULT_TEMPERATURE } from '@/lib/eval-types';
+import { ModelSettingsFields, type ModelSettingsValues } from '@/components/eval/model-settings-fields';
 import type { VersionOption } from '@/lib/prompt-catalog';
 import { usePromptCatalog } from '@/lib/prompt-catalog';
 import { usePromptDrafts } from '@/lib/prompt-drafts-context';
@@ -186,6 +187,11 @@ function PromptEditor({
                 ))}
               </SelectContent>
             </Select>
+            {!versionInList && (
+              <p className="text-muted-foreground mt-1 text-xs">
+                Config references version ID {versionId} (not in recent list).
+              </p>
+            )}
           </div>
 
           <div>
@@ -216,13 +222,13 @@ function PromptEditor({
         variant="ghost"
         size="sm"
         onClick={toggleExpanded}
-        className="text-muted-foreground hover:text-foreground mt-4 -ml-2 gap-1 px-2"
+        className="text-muted-foreground hover:text-foreground -ml-2 gap-1 px-2 m-0"
       >
         {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         View / Edit Prompt
       </Button>
       {/* Keep editor mounted while collapsed so unsaved edits persist (15.5). */}
-      <div className={expanded ? 'mt-3' : 'hidden mt-0'} aria-hidden={!expanded}>
+      <div className={expanded ? '' : 'hidden'} aria-hidden={!expanded}>
         <EmbeddedPromptEditor
           promptProjectId={prompt.promptId}
           versionId={prompt.versionId}
@@ -230,6 +236,31 @@ function PromptEditor({
           onVersionCreated={handleVersionCreated}
           onPromptContentChange={(content) => setLivePromptContent(prompt, content)}
         />
+
+        {/* Model settings */}
+        <div className="mt-4 rounded-lg border border-dashed border-border p-4 space-y-3">
+          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <Settings2 className="h-4 w-4 text-muted-foreground" />
+            Model Settings
+          </div>
+          <ModelSettingsFields
+            value={{
+              vendor: prompt.vendor ?? DEFAULT_VENDOR,
+              model: prompt.model ?? DEFAULT_MODEL,
+              temperature: prompt.temperature ?? DEFAULT_TEMPERATURE,
+              maxTokens: prompt.maxTokens ?? 3000,
+            }}
+            onChange={(v: ModelSettingsValues) =>
+              onUpdate({
+                ...prompt,
+                vendor: v.vendor,
+                model: v.model,
+                temperature: v.temperature,
+                maxTokens: v.maxTokens,
+              })
+            }
+          />
+        </div>
       </div>
 
       <AlertDialog
@@ -259,27 +290,25 @@ function PromptEditor({
 
 export function PromptsSection() {
   const { config, addPrompt, updatePrompt, deletePrompt } = useEval();
-  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(0);
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base font-medium">Prompt Source</CardTitle>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => addPrompt()}
-            className="gap-1.5"
-          >
-            <Plus className="h-4 w-4" />
-            Add Another Prompt
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>
+    <div>
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-medium text-foreground">Prompt Source</h2>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => addPrompt()}
+          className="gap-1.5"
+        >
+          <Plus className="h-4 w-4" />
+          Add Another Prompt
+        </Button>
+      </div>
+      <div className="mt-3">
         {config.prompts.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border p-6 text-center">
+          <div className="py-6 text-center">
             <p className="text-sm text-muted-foreground">
               No prompts configured. Add a prompt to get started.
             </p>
@@ -294,22 +323,24 @@ export function PromptsSection() {
             </Button>
           </div>
         ) : (
-          <div className="divide-y divide-border">
+          <div>
             {config.prompts.map((prompt, index) => (
-              <PromptEditor
-                key={index}
-                prompt={prompt}
-                index={index}
-                expanded={expandedIndex === index}
-                onExpand={(i) => setExpandedIndex(i)}
-                onUpdate={(updated) => updatePrompt(index, updated)}
-                onDelete={() => deletePrompt(index)}
-                canDelete={config.prompts.length > 1}
-              />
+              <div key={index}>
+                {index > 0 && <Separator />}
+                <PromptEditor
+                  prompt={prompt}
+                  index={index}
+                  expanded={expandedIndex === index}
+                  onExpand={(i) => setExpandedIndex(i)}
+                  onUpdate={(updated) => updatePrompt(index, updated)}
+                  onDelete={() => deletePrompt(index)}
+                  canDelete={config.prompts.length > 1}
+                />
+              </div>
             ))}
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

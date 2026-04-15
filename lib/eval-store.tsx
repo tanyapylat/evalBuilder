@@ -30,6 +30,8 @@ type EvalAction =
   | { type: 'DUPLICATE_ASSERTION'; payload: number }
   | { type: 'REORDER_ASSERTIONS'; payload: Assertion[] }
   | { type: 'REPLACE_ALL_ASSERTIONS'; payload: Assertion[] }
+  | { type: 'DELETE_ASSERTIONS_BY_IDS'; payload: Set<string> }
+  | { type: 'DELETE_ALL_ASSERTIONS' }
   | { type: 'ADD_TEST'; payload: TestCase }
   | { type: 'BATCH_ADD_TESTS'; payload: TestCase[] }
   | { type: 'UPDATE_TEST'; payload: { index: number; test: TestCase } }
@@ -130,6 +132,24 @@ function evalReducer(state: EvalConfig, action: EvalAction): EvalConfig {
         },
       };
 
+    case 'DELETE_ASSERTIONS_BY_IDS':
+      return {
+        ...state,
+        defaultTest: {
+          ...state.defaultTest,
+          assert: state.defaultTest.assert.filter((a) => !action.payload.has(a.id)),
+        },
+      };
+
+    case 'DELETE_ALL_ASSERTIONS':
+      return {
+        ...state,
+        defaultTest: {
+          ...state.defaultTest,
+          assert: [],
+        },
+      };
+
     case 'ADD_TEST':
       if (typeof state.tests === 'string') {
         return { ...state, tests: [action.payload] };
@@ -201,6 +221,8 @@ interface EvalContextType {
   duplicateAssertion: (index: number) => void;
   reorderAssertions: (assertions: Assertion[]) => void;
   replaceAllAssertions: (assertions: Assertion[]) => void;
+  deleteAssertionsByIds: (ids: Set<string>) => void;
+  deleteAllAssertions: () => void;
   addTest: (test?: Partial<TestCase>) => void;
   batchAddTests: (tests: TestCase[]) => void;
   updateTest: (index: number, test: TestCase) => void;
@@ -310,6 +332,14 @@ export function EvalProvider({ children }: { children: React.ReactNode }) {
 
   const replaceAllAssertions = useCallback((assertions: Assertion[]) => {
     dispatch({ type: 'REPLACE_ALL_ASSERTIONS', payload: assertions });
+  }, []);
+
+  const deleteAssertionsByIds = useCallback((ids: Set<string>) => {
+    dispatch({ type: 'DELETE_ASSERTIONS_BY_IDS', payload: ids });
+  }, []);
+
+  const deleteAllAssertions = useCallback(() => {
+    dispatch({ type: 'DELETE_ALL_ASSERTIONS' });
   }, []);
 
   const addTest = useCallback((test?: Partial<TestCase>) => {
@@ -479,6 +509,13 @@ export function EvalProvider({ children }: { children: React.ReactNode }) {
   }, [stopPolling]);
 
   const runEval = useCallback(async () => {
+    if (config.prompts.length === 0) {
+      toast.error('Add at least one prompt before running an evaluation.');
+      return;
+    }
+    if (config.defaultTest.assert.length === 0 && (typeof config.tests === 'string' ? !config.tests.trim() : config.tests.length === 0)) {
+      toast.warning('Running without assertions or test cases — results may be empty.');
+    }
     setIsRunning(true);
     const toastId = toast.loading('Queuing evaluation…');
     try {
@@ -559,6 +596,8 @@ export function EvalProvider({ children }: { children: React.ReactNode }) {
         duplicateAssertion,
         reorderAssertions,
         replaceAllAssertions,
+        deleteAssertionsByIds,
+        deleteAllAssertions,
         addTest,
         batchAddTests,
         updateTest,

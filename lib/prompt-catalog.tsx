@@ -79,6 +79,20 @@ const SEED_CONTENT: Record<string, PromptVersionContent> = (() => {
     model: 'gpt-4.1-2025-04-14',
     params: { temperature: 0.5, max_tokens: 500 },
   };
+  const p10000mo01ayod: PromptVersionContent = {
+    ...clonePromptVersionContent(base),
+    messages: [
+      {
+        role: 'system',
+        content:
+          'Generate a brief follow-up SMS using the conversation below. The message should be context-aware, actionable, and written in a natural tone. Avoid repeating the full conversation. Limit to 1–2 sentences. SMS should not ever contain words like "Free" or "Advice" (case insensitive). \n\n{{Conversation}}',
+      },
+    ],
+    variables: ['Conversation'],
+    vendor: 'openai',
+    model: 'gpt-4.1-2025-04-14',
+    params: { temperature: 0, max_tokens: 3000 },
+  };
   return {
     [`${DEMO_RESOLVED_PROJECT_ID}:17905`]: crm17905,
     [`${DEMO_RESOLVED_PROJECT_ID}:17903`]: clonePromptVersionContent(crm17905),
@@ -86,6 +100,8 @@ const SEED_CONTENT: Record<string, PromptVersionContent> = (() => {
     '1234:56789': p1234,
     '1234:56781': clonePromptVersionContent(p1234),
     '1234:56782': clonePromptVersionContent(p1234),
+    '10000:mo01ayod': p10000mo01ayod,
+    '10000:mo024xy827as': clonePromptVersionContent(p10000mo01ayod),
   };
 })();
 

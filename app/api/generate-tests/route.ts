@@ -35,7 +35,10 @@ const bodySchema = z.object({
   ),
   variables: z.array(z.string()).optional(),
   count: z.number().int().min(1).max(10).optional(),
+  vendor: z.string().optional(),
   model: z.string().optional(),
+  temperature: z.number().min(0).max(2).optional(),
+  maxTokens: z.number().int().min(1).optional(),
   examples: z.array(z.record(z.string(), z.string())).optional(),
 });
 
@@ -142,10 +145,13 @@ export async function POST(req: Request) {
     );
   }
 
-  const { prompts, existingAssertions, variables, count: requestedCount, model: requestedModel, examples } = parsed.data;
+  const { prompts, existingAssertions, variables, count: requestedCount, vendor: requestedVendor, model: requestedModel, temperature: requestedTemperature, maxTokens: requestedMaxTokens, examples } = parsed.data;
   const count = Math.min(Math.max(requestedCount ?? 10, 1), 10);
+  const vendor = requestedVendor?.trim() || 'openai';
   const model =
     requestedModel?.trim() || process.env.OPENAI_TEST_GEN_MODEL?.trim() || 'gpt-4.1-2025-04-14';
+  const temperature = requestedTemperature ?? 0.7;
+  const maxTokens = requestedMaxTokens ?? 30000;
 
   const userBlock = [
     '## Prompt content (analyze as written)',
@@ -173,8 +179,9 @@ export async function POST(req: Request) {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model,
-        temperature: 0.7,
+        model: vendor === 'openai' ? model : `${vendor}/${model}`,
+        temperature,
+        max_tokens: maxTokens,
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: buildSystemPrompt(count) },

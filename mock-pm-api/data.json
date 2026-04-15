@@ -1,0 +1,178 @@
+{
+  "projects": [
+    {
+      "id": "1234",
+      "name": "Sample Project 1234"
+    },
+    {
+      "id": "2735",
+      "name": "CRM Email Project"
+    },
+    {
+      "id": "10000",
+      "name": "Prompt Project 10000"
+    }
+  ],
+  "versions": {
+    "1234": [
+      {
+        "id": "mo021yqc06yd",
+        "name": "Version mo021yqc06yd"
+      },
+      {
+        "id": "56789",
+        "name": "Version 56789 (Latest)"
+      },
+      {
+        "id": "56782",
+        "name": "Version 56782"
+      },
+      {
+        "id": "56781",
+        "name": "Version 56781"
+      }
+    ],
+    "2735": [
+      {
+        "id": "14631",
+        "name": "Version 14631 (Latest)"
+      },
+      {
+        "id": "17905",
+        "name": "Version 17905 (Anthropic)"
+      },
+      {
+        "id": "17903",
+        "name": "Version 17903 (OpenAI)"
+      }
+    ],
+    "10000": [
+      {
+        "id": "mo024xy827as",
+        "name": "Version mo024xy827as"
+      },
+      {
+        "id": "mo0242dfpuq7",
+        "name": "Version mo0242dfpuq7"
+      },
+      {
+        "id": "mo01ayod",
+        "name": "Version mo01ayod (New)"
+      }
+    ]
+  },
+  "versionContent": {
+    "1234:56789": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a helpful assistant."
+        },
+        {
+          "role": "user",
+          "content": "{{user_message}}"
+        }
+      ],
+      "variables": [
+        "user_message"
+      ],
+      "vendor": "openai",
+      "model": "gpt-4.1-2025-04-14",
+      "params": {
+        "temperature": 0,
+        "max_tokens": 3000
+      }
+    },
+    "2735:14631": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a CRM email specialist. Write professional and empathetic emails."
+        },
+        {
+          "role": "user",
+          "content": "Write an email for: {{email_context}}"
+        }
+      ],
+      "variables": [
+        "email_context"
+      ],
+      "vendor": "openai",
+      "model": "gpt-4.1-2025-04-14",
+      "params": {
+        "temperature": 0.3,
+        "max_tokens": 1000
+      }
+    },
+    "10000:mo01ayod": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a helpful assistant."
+        },
+        {
+          "role": "user",
+          "content": "{{user_message}}"
+        }
+      ],
+      "variables": [
+        "user_message"
+      ],
+      "vendor": "openai",
+      "model": "gpt-4.1-2025-04-14",
+      "params": {
+        "temperature": 0,
+        "max_tokens": 3000
+      }
+    },
+    "1234:mo021yqc06yd": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "Test prompt"
+        }
+      ],
+      "variables": [],
+      "vendor": "openai",
+      "model": "gpt-4o",
+      "params": {
+        "temperature": 0.5,
+        "max_tokens": 500
+      }
+    },
+    "10000:mo0242dfpuq7": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "Generate a brief follow-up SMS using the conversation below. The message should be context-aware, actionable, and written in a natural tone. Avoid repeating the full conversation. Limit to 1–2 sentences. SMS should not ever contain words like \"Free\" or \"Advice\" (case insensitive). Test change.\n\n{{Conversation}}"
+        }
+      ],
+      "variables": [
+        "Conversation"
+      ],
+      "vendor": "openai",
+      "model": "gpt-4.1-2025-04-14",
+      "params": {
+        "temperature": 0,
+        "max_tokens": 3000
+      }
+    },
+    "10000:mo024xy827as": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "Generate a brief follow-up SMS using the conversation below. The message should be context-aware, actionable, and written in a natural tone. Avoid repeating the full conversation. Limit to 1–2 sentences. SMS should not ever contain words like \"Free\" or \"Advice\" (case insensitive). \n{{Conversation}}"
+        }
+      ],
+      "variables": [
+        "Conversation"
+      ],
+      "vendor": "openai",
+      "model": "gpt-4.1-2025-04-14",
+      "params": {
+        "temperature": 0,
+        "max_tokens": 3000
+      }
+    }
+  }
+}

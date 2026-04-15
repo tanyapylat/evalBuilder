@@ -1,24 +1,16 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useEval } from '@/lib/eval-store';
 import { usePromptCatalog } from '@/lib/prompt-catalog';
 import { usePromptDrafts } from '@/lib/prompt-drafts-context';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import {
   Plus,
@@ -58,27 +50,38 @@ import {
 } from '@/components/ui/collapsible';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { generateId } from '@/lib/yaml-utils';
-import { GENERATION_MODELS } from '@/lib/eval-types';
+import {
+  DEFAULT_VENDOR,
+  DEFAULT_MODEL,
+  type TestCase,
+} from '@/lib/eval-types';
+import { ModelSettingsFields, type ModelSettingsValues } from '@/components/eval/model-settings-fields';
 import { cn } from '@/lib/utils';
-import type { TestCase } from '@/lib/eval-types';
 
 // ─── TestCase editor (for manual add/edit) ───────────────────────────────────
 
 function TestCaseEditor({
   testCase,
+  promptVariables,
   onSave,
   onCancel,
 }: {
   testCase: TestCase | null;
+  promptVariables?: string[];
   onSave: (testCase: TestCase) => void;
   onCancel: () => void;
 }) {
   const [description, setDescription] = useState(testCase?.description || '');
-  const [variables, setVariables] = useState<Array<{ key: string; value: string }>>(
-    testCase?.vars
-      ? Object.entries(testCase.vars).map(([key, value]) => ({ key, value }))
-      : [{ key: 'user_message', value: '' }]
-  );
+  const defaultVars = useMemo(() => {
+    if (testCase?.vars) {
+      return Object.entries(testCase.vars).map(([key, value]) => ({ key, value }));
+    }
+    if (promptVariables && promptVariables.length > 0) {
+      return promptVariables.map((v) => ({ key: v, value: '' }));
+    }
+    return [{ key: 'user_message', value: '' }];
+  }, [testCase, promptVariables]);
+  const [variables, setVariables] = useState<Array<{ key: string; value: string }>>(defaultVars);
 
   const addVariable = () => {
     setVariables([...variables, { key: '', value: '' }]);
@@ -174,16 +177,23 @@ function GenerationSettings({
   onGenerate,
   isGenerating,
   mode,
+  defaultExampleKey,
 }: {
-  onGenerate: (opts: { count: number; model: string; examples: Record<string, string>[] }) => void;
+  onGenerate: (opts: { count: number; vendor: string; model: string; temperature: number; maxTokens: number; examples: Record<string, string>[] }) => void;
   isGenerating: boolean;
   mode: 'initial' | 'additional' | 'regenerate';
+  defaultExampleKey?: string;
 }) {
   const [count, setCount] = useState(5);
-  const [model, setModel] = useState(GENERATION_MODELS[0].id);
+  const [modelSettings, setModelSettings] = useState<ModelSettingsValues>({
+    vendor: DEFAULT_VENDOR,
+    model: DEFAULT_MODEL,
+    temperature: 0.7,
+    maxTokens: 30000,
+  });
   const [examples, setExamples] = useState<Record<string, string>[]>([]);
   const [showExamples, setShowExamples] = useState(false);
-  const [newExampleKey, setNewExampleKey] = useState('user_message');
+  const [newExampleKey, setNewExampleKey] = useState(defaultExampleKey || 'user_message');
   const [newExampleValue, setNewExampleValue] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -234,7 +244,6 @@ function GenerationSettings({
             });
           }
         } else {
-          // CSV-like: first line is header, rest are values
           const headers = lines[0].split(',').map((h) => h.trim().replace(/^["']|["']$/g, ''));
           for (let i = 1; i < Math.min(lines.length, 11); i++) {
             const values = lines[i].split(',').map((v) => v.trim().replace(/^["']|["']$/g, ''));
@@ -264,7 +273,7 @@ function GenerationSettings({
   };
 
   const handleGenerate = () => {
-    onGenerate({ count, model, examples });
+    onGenerate({ count, ...modelSettings, examples });
   };
 
   const buttonLabel = mode === 'regenerate'
@@ -279,42 +288,24 @@ function GenerationSettings({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label className="text-xs font-medium text-muted-foreground">
-            Number of test cases
-          </Label>
-          <div className="flex items-center gap-3">
-            <Slider
-              min={1}
-              max={10}
-              step={1}
-              value={[count]}
-              onValueChange={([v]) => setCount(v)}
-              className="flex-1"
-            />
-            <span className="w-6 text-center text-sm font-medium tabular-nums">{count}</span>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <Label className="text-xs font-medium text-muted-foreground">
-            Model
-          </Label>
-          <Select value={model} onValueChange={setModel}>
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {GENERATION_MODELS.map((m) => (
-                <SelectItem key={m.id} value={m.id}>
-                  {m.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      <div className="space-y-2">
+        <Label className="text-xs font-medium text-muted-foreground">
+          Number of test cases
+        </Label>
+        <div className="flex items-center gap-3 max-w-xs">
+          <Slider
+            min={1}
+            max={10}
+            step={1}
+            value={[count]}
+            onValueChange={([v]) => setCount(v)}
+            className="flex-1"
+          />
+          <span className="w-6 text-center text-sm font-medium tabular-nums">{count}</span>
         </div>
       </div>
+
+      <ModelSettingsFields value={modelSettings} onChange={setModelSettings} />
 
       {/* Examples section */}
       <Collapsible open={showExamples} onOpenChange={setShowExamples}>
@@ -429,7 +420,6 @@ function GenerationSettings({
 // ─── CSV URL dialog ──────────────────────────────────────────────────────────
 
 function CsvImportDialog({ onSetUrl }: {
-  onImport: (tests: TestCase[]) => void;
   onSetUrl: (url: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -515,9 +505,24 @@ export function DatasetSection() {
   const tests = isUrlDataset ? [] : (config.tests as TestCase[]);
   const hasTests = tests.length > 0;
 
-  const allKeys = Array.from(
-    new Set(tests.flatMap((t) => Object.keys(t.vars)))
-  );
+  // Extract variable names from all configured prompts ({{...}} placeholders).
+  const promptVariables = useMemo(() => {
+    return Array.from(
+      new Set(
+        config.prompts.flatMap((p) => {
+          const live = getLivePromptContent(p);
+          if (live) return live.variables;
+          return getPromptVersionContent(p.promptId, p.versionId).variables;
+        }),
+      ),
+    );
+  }, [config.prompts, getLivePromptContent, getPromptVersionContent]);
+
+  // Prompt variables take priority; any extra keys from existing tests are appended.
+  const allKeys = useMemo(() => {
+    const fromTests = tests.flatMap((t) => Object.keys(t.vars));
+    return Array.from(new Set([...promptVariables, ...fromTests]));
+  }, [promptVariables, tests]);
 
   const allSelected = hasTests && selectedIds.size === tests.length;
   const someSelected = selectedIds.size > 0;
@@ -559,10 +564,6 @@ export function DatasetSection() {
     }
   };
 
-  const handleImportCSV = (importedTests: TestCase[]) => {
-    importedTests.forEach((test) => addTest(test));
-  };
-
   const handleSetUrl = (url: string) => {
     setTestsUrl(url);
   };
@@ -571,7 +572,7 @@ export function DatasetSection() {
     setTestsUrl('');
   };
 
-  const handleGenerate = async (opts: { count: number; model: string; examples: Record<string, string>[] }) => {
+  const handleGenerate = async (opts: { count: number; vendor: string; model: string; temperature: number; maxTokens: number; examples: Record<string, string>[] }) => {
     if (config.prompts.length === 0) {
       toast.error('Add at least one prompt in Prompt Source first.');
       return;
@@ -608,6 +609,7 @@ export function DatasetSection() {
           })),
           variables: allVariables,
           count: opts.count,
+          vendor: opts.vendor,
           model: opts.model,
           examples: opts.examples.length > 0 ? opts.examples : undefined,
         }),
@@ -683,54 +685,52 @@ export function DatasetSection() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base font-medium">Dataset / Tests</CardTitle>
-            <div className="flex gap-2">
-              {hasTests ? (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => openGeneratePanel('additional')}
-                    disabled={isUrlDataset}
-                  >
-                    <Sparkles className="mr-2 h-4 w-4" />
-                    Generate More
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => openGeneratePanel('regenerate')}
-                    disabled={isUrlDataset}
-                  >
-                    <RefreshCw className="mr-2 h-4 w-4" />
-                    Regenerate
-                  </Button>
-                </>
-              ) : (
+      <div>
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-medium text-foreground">Dataset / Tests</h2>
+          <div className="flex gap-2">
+            {hasTests ? (
+              <>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => openGeneratePanel('initial')}
+                  onClick={() => openGeneratePanel('additional')}
                   disabled={isUrlDataset}
                 >
                   <Sparkles className="mr-2 h-4 w-4" />
-                  Generate Tests
+                  Generate More
                 </Button>
-              )}
-              <CsvImportDialog onImport={handleImportCSV} onSetUrl={handleSetUrl} />
-              {!isUrlDataset && (
-                <Button size="sm" onClick={() => setIsAddingNew(true)}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Test
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openGeneratePanel('regenerate')}
+                  disabled={isUrlDataset}
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Regenerate
                 </Button>
-              )}
-            </div>
+              </>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => openGeneratePanel('initial')}
+                disabled={isUrlDataset}
+              >
+                <Sparkles className="mr-2 h-4 w-4" />
+                Generate Tests
+              </Button>
+            )}
+            <CsvImportDialog onSetUrl={handleSetUrl} />
+            {!isUrlDataset && (
+              <Button size="sm" onClick={() => setIsAddingNew(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add Test
+              </Button>
+            )}
           </div>
-        </CardHeader>
-        <CardContent>
+        </div>
+        <div className="mt-3">
           {/* Generation settings panel */}
           {showGeneratePanel && !isUrlDataset && (
             <div className="mb-6 rounded-lg border border-primary/20 bg-primary/5 p-4">
@@ -761,21 +761,36 @@ export function DatasetSection() {
                 onGenerate={handleGenerate}
                 isGenerating={isGenerating}
                 mode={generateMode}
+                defaultExampleKey={promptVariables[0]}
               />
             </div>
           )}
 
           {isUrlDataset ? (
             <div className="rounded-lg border border-border bg-muted/50 p-4">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground">Dataset URL</p>
-                  <p className="text-sm text-muted-foreground truncate">{config.tests as string}</p>
-                </div>
-                <Button variant="outline" size="sm" onClick={handleClearUrl}>
-                  Clear URL
+              <Label className="text-xs font-medium text-muted-foreground mb-2 block">
+                Dataset URL
+              </Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  value={config.tests as string}
+                  onChange={(e) => setTestsUrl(e.target.value)}
+                  placeholder="https://example.com/dataset.csv"
+                  className="flex-1"
+                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0 text-muted-foreground hover:text-destructive"
+                  onClick={handleClearUrl}
+                  title="Remove CSV link"
+                >
+                  <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                The URL will be referenced directly in the YAML config. The dataset will be fetched at runtime.
+              </p>
             </div>
           ) : (
             <>
@@ -784,6 +799,7 @@ export function DatasetSection() {
                   <h4 className="mb-4 text-sm font-medium text-foreground">New Test Case</h4>
                   <TestCaseEditor
                     testCase={null}
+                    promptVariables={promptVariables}
                     onSave={handleSave}
                     onCancel={() => setIsAddingNew(false)}
                   />
@@ -929,8 +945,8 @@ export function DatasetSection() {
               ) : null}
             </>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </>
   );
 }

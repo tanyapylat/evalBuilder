@@ -2,6 +2,10 @@ export interface PromptConfig {
   promptId: number | string;
   versionId: number | string;
   label?: string;
+  vendor?: string;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
 }
 
 export interface JudgeProviderConfig {
@@ -325,15 +329,18 @@ export const SAMPLE_PROMPT_VERSIONS: Record<string, { id: string; name: string }
     { id: '17905', name: 'Version 17905 (Anthropic)' },
     { id: '17903', name: 'Version 17903 (OpenAI)' },
   ],
+  '10000': [
+    { id: 'mo024xy827as', name: 'Version mo024xy827as' },
+    { id: 'mo01ayod', name: 'Version mo01ayod (New)' },
+  ],
 };
 
 export const DEFAULT_EVAL_CONFIG: EvalConfig = {
-  description: 'Test configs for FAQ',
+  description: '',
   prompts: [
     {
-      promptId: 2735,
-      versionId: 17905,
-      label: 'anthropic',
+      promptId: 10000,
+      versionId: 'mo024xy827as',
     },
   ],
   providers: [
@@ -387,38 +394,60 @@ export const DEFAULT_EVAL_CONFIG: EvalConfig = {
         },
       },
     },
-    assert: [
-      {
-        id: 'assert-1',
-        type: 'llm-rubric',
-        metric: 'Evaluate subject line',
-        value: 'Judge the model output for a JustAnswer follow-up email subject line. Input conversation: {{user_message}}.  PASS only if: - subject_line is in friendly, formal tone and recaps essence of user\'s issue. Otherwise always FAIL.',
-      },
-    ],
+    assert: [],
   },
-  tests: [
-    {
-      id: 'test-1',
-      vars: {
-        user_message: `Customer: We have a depression era (we think) glass chest. Can you help us identify and valuate? Expert: Hello! My name is Mark P and I am a certified appraiser of art, antiques, coins and collectibles with over 20 years of major international auction house experience. Thanks for the pictures. I'll begin researching and be back to you in a bit. Customer: Good Day Mark. More Images to follow Customer: File attached (LPZZP6Z) Customer: File attached (T41QTMS) Customer: In Pristine condition Expert: Thanks for the pictures! I'll begin researching and be back to you in a bit. Customer: No worries Expert: I am not finding an identification for the maker of the vanity/trinket/jewelry box, but see attached a past auction sale of one included in a group lot. Realistic sale value for it is between $30 and $70 in the auction or online market.I hope you find this helpful and informative. I'll be happy to answer any questions or provide sale option guidance if you would like. Just let me know! All my best, Mark P Customer: Thank you, there was is no mark on the item. Customer: Your efforts are appreciated Customer: Have a great day and a greater weekend Expert: You are very welcome! Glad to be of assistance.I will be happy to assist with more items (fine art, antiques, books, coins, currency, collectibles), but please start a new question from the main Just Answer webpage. No additional costs – just how it works. You can request me by putting "For Mark P" or @MarkP at the beginning of your first response or using this link (but still put @MarkP at the beginning): https://www.justanswer.com/antiques/expert-mark-pAll my best, Mark P`,
-      },
-    },
+  tests: [],
+};
+
+// ─── Centralized vendor / model catalogue ─────────────────────────────────────
+
+export interface ModelOption {
+  id: string;
+  name: string;
+}
+
+export const VENDOR_MODELS: Record<string, ModelOption[]> = {
+  openai: [
+    { id: 'gpt-4.1-2025-04-14', name: 'GPT-4.1' },
+    { id: 'gpt-5-mini-2025-08-07', name: 'GPT-5 Mini' },
+    { id: 'gpt-4.1-mini-2025-04-14', name: 'GPT-4.1 Mini' },
+    { id: 'gpt-4.1-nano-2025-04-14', name: 'GPT-4.1 Nano' },
+    { id: 'o3-mini', name: 'o3-mini' },
+  ],
+  anthropic: [
+    { id: 'claude-sonnet-4', name: 'Claude Sonnet 4' },
+    { id: 'claude-opus-4', name: 'Claude Opus 4' },
   ],
 };
 
-export const JUDGE_MODELS = [
-  { id: 'openai:gpt-5-mini-2025-08-07', name: 'GPT-5 Mini' },
-  { id: 'openai:gpt-4.1-2025-04-14', name: 'GPT-4.1' },
-  { id: 'anthropic:claude-opus-4', name: 'Claude Opus 4' },
-  { id: 'anthropic:claude-sonnet-4', name: 'Claude Sonnet 4' },
-];
+export const VENDORS = Object.keys(VENDOR_MODELS);
+export const DEFAULT_VENDOR = 'openai';
+export const DEFAULT_MODEL = 'gpt-4.1-2025-04-14';
+export const DEFAULT_TEMPERATURE = 0;
 
-export const GENERATION_MODELS = [
-  { id: 'gpt-4.1-2025-04-14', name: 'GPT-4.1' },
-  { id: 'gpt-4.1-mini-2025-04-14', name: 'GPT-4.1 Mini' },
-  { id: 'gpt-4.1-nano-2025-04-14', name: 'GPT-4.1 Nano' },
-  { id: 'o3-mini', name: 'o3-mini' },
-];
+export function getModelsForVendor(vendor: string): ModelOption[] {
+  return VENDOR_MODELS[vendor] ?? VENDOR_MODELS[DEFAULT_VENDOR]!;
+}
+
+export function vendorModelId(vendor: string, model: string): string {
+  return `${vendor}:${model}`;
+}
+
+export function parseVendorModelId(id: string): { vendor: string; model: string } {
+  const idx = id.indexOf(':');
+  if (idx < 0) return { vendor: DEFAULT_VENDOR, model: id };
+  return { vendor: id.substring(0, idx), model: id.substring(idx + 1) };
+}
+
+/** Flat list used by legacy call-sites that still need a single list with `vendor:model` ids. */
+export const JUDGE_MODELS = Object.entries(VENDOR_MODELS).flatMap(([vendor, models]) =>
+  models.map((m) => ({ id: `${vendor}:${m.id}`, name: m.name })),
+);
+
+/** Flat list of all models (plain model ids, no vendor prefix). */
+export const GENERATION_MODELS = Object.entries(VENDOR_MODELS).flatMap(([, models]) =>
+  models.map((m) => ({ id: m.id, name: m.name })),
+);
 
 export const ASSERTION_CATEGORIES: Record<string, AssertionType[]> = {
   'String Matching': ['equals', 'contains', 'icontains', 'contains-all', 'contains-any', 'icontains-all', 'icontains-any', 'starts-with', 'regex'],

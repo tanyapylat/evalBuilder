@@ -15,8 +15,8 @@ import {
   Search,
   Bot,
   RefreshCw,
+  HelpCircle,
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -60,6 +60,7 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
 import { useEval } from '@/lib/eval-store';
 import { usePromptCatalog } from '@/lib/prompt-catalog';
@@ -69,15 +70,21 @@ import {
   LLM_ASSERTIONS,
   ASSERTION_INFO,
   ASSERTION_CATEGORIES,
-  JUDGE_MODELS,
+  DEFAULT_VENDOR,
+  DEFAULT_MODEL,
+  DEFAULT_TEMPERATURE,
+  vendorModelId,
+  parseVendorModelId,
   type Assertion,
   type AssertionType,
   type EvalConfig,
   type JudgeProviderConfig,
 } from '@/lib/eval-types';
+import { ModelSettingsFields, type ModelSettingsValues } from '@/components/eval/model-settings-fields';
 import { generateId } from '@/lib/yaml-utils';
 import { cn } from '@/lib/utils';
 import { type AssertionSuggestion } from '@/lib/ai-assistance';
+import { AssertionAdvisor } from '@/components/eval/assertion-advisor';
 
 // ─── Type helpers ─────────────────────────────────────────────────────────────
 
@@ -261,76 +268,36 @@ function JudgeSettings({
   onUpdate: (a: Assertion) => void;
 }) {
   const provider: JudgeProviderConfig = assertion.provider ?? {
-    id: 'openai:gpt-5-mini-2025-08-07',
-    config: { max_tokens: 30000, temperature: 0 },
+    id: vendorModelId(DEFAULT_VENDOR, DEFAULT_MODEL),
+    config: { max_tokens: 30000, temperature: DEFAULT_TEMPERATURE },
   };
 
-  const updateProvider = (updates: Partial<JudgeProviderConfig>) =>
+  const { vendor, model } = parseVendorModelId(provider.id);
+
+  const handleChange = (v: ModelSettingsValues) => {
     onUpdate({
       ...assertion,
-      provider: { ...provider, ...updates } as JudgeProviderConfig,
+      provider: {
+        id: vendorModelId(v.vendor, v.model),
+        config: { ...provider.config, temperature: v.temperature, max_tokens: v.maxTokens },
+      },
     });
+  };
 
   return (
     <div className="rounded-lg border border-dashed border-border p-4 space-y-3">
       <div className="text-sm font-medium text-foreground">
         Judge Model Settings
       </div>
-      <div className="grid grid-cols-3 gap-3">
-        <div className="col-span-3 sm:col-span-1">
-          <Label className="text-xs font-medium text-muted-foreground">Model</Label>
-          <Select
-            value={provider.id}
-            onValueChange={(v) => updateProvider({ id: v })}
-          >
-            <SelectTrigger className="mt-1.5 h-9 text-sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {JUDGE_MODELS.map((m) => (
-                <SelectItem key={m.id} value={m.id}>
-                  {m.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <Label className="text-xs font-medium text-muted-foreground">Max Tokens</Label>
-          <Input
-            type="number"
-            value={provider.config.max_tokens}
-            onChange={(e) =>
-              updateProvider({
-                config: {
-                  ...provider.config,
-                  max_tokens: parseInt(e.target.value) || 3000,
-                },
-              })
-            }
-            className="mt-1.5 h-9 text-sm"
-          />
-        </div>
-        <div>
-          <Label className="text-xs font-medium text-muted-foreground">Temperature</Label>
-          <Input
-            type="number"
-            min={0}
-            max={2}
-            step={0.1}
-            value={provider.config.temperature}
-            onChange={(e) =>
-              updateProvider({
-                config: {
-                  ...provider.config,
-                  temperature: parseFloat(e.target.value) || 0,
-                },
-              })
-            }
-            className="mt-1.5 h-9 text-sm"
-          />
-        </div>
-      </div>
+      <ModelSettingsFields
+        value={{
+          vendor,
+          model,
+          temperature: provider.config.temperature,
+          maxTokens: provider.config.max_tokens,
+        }}
+        onChange={handleChange}
+      />
     </div>
   );
 }
@@ -342,6 +309,8 @@ interface AssertionEditorProps {
   index: number;
   isNew?: boolean;
   bulkToggle: { id: number; expanded: boolean };
+  selected: boolean;
+  onToggleSelect: () => void;
   onUpdate: (assertion: Assertion) => void;
   onDelete: () => void;
   onDuplicate: () => void;
@@ -352,11 +321,13 @@ function AssertionEditor({
   index,
   isNew,
   bulkToggle,
+  selected,
+  onToggleSelect,
   onUpdate,
   onDelete,
   onDuplicate,
 }: AssertionEditorProps) {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(!!isNew);
   const containerRef = useRef<HTMLDivElement>(null);
   const metricInputRef = useRef<HTMLInputElement>(null);
 
@@ -364,11 +335,10 @@ function AssertionEditor({
     setIsExpanded(bulkToggle.expanded);
   }, [bulkToggle.id]);
 
-  // Scroll into view and focus metric name when freshly created
   useEffect(() => {
     if (isNew) {
+      setIsExpanded(true);
       containerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      // Small delay lets the DOM settle before focusing
       const t = setTimeout(() => metricInputRef.current?.focus(), 120);
       return () => clearTimeout(t);
     }
@@ -403,11 +373,32 @@ function AssertionEditor({
 
   return (
     <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
-      <div ref={containerRef} className="rounded-lg border border-border bg-card">
+      <div
+        ref={containerRef}
+        className={cn(
+          'rounded-lg border bg-card overflow-hidden',
+          isLlm
+            ? 'border-violet-500/30 ring-1 ring-violet-500/10'
+            : 'border-emerald-500/30 ring-1 ring-emerald-500/10',
+          selected && 'ring-2 ring-primary/30 bg-primary/[0.02]',
+        )}
+      >
 
         {/* ── Collapsed header / trigger ── */}
         <CollapsibleTrigger asChild>
-          <div className="flex cursor-pointer items-center gap-3 p-3 hover:bg-muted/50">
+          <div
+            className={cn(
+              'flex cursor-pointer items-center gap-3 p-3 hover:bg-muted/50',
+              isLlm ? 'border-l-[3px] border-l-violet-500' : 'border-l-[3px] border-l-emerald-500',
+            )}
+          >
+            <Checkbox
+              checked={selected}
+              onCheckedChange={() => onToggleSelect()}
+              onClick={(e) => e.stopPropagation()}
+              aria-label={`Select assertion ${index + 1}`}
+              className="shrink-0"
+            />
             <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-muted-foreground/40" />
 
             <div className="flex flex-1 items-center gap-2 min-w-0">
@@ -416,8 +407,8 @@ function AssertionEditor({
                 className={cn(
                   'shrink-0 text-xs font-normal',
                   isLlm
-                    ? 'border-primary/30 bg-primary/5 text-primary'
-                    : 'border-muted-foreground/30 bg-muted/50',
+                    ? 'border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-400'
+                    : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
                 )}
               >
                 {isLlm ? 'LLM' : 'Deterministic'}
@@ -464,7 +455,10 @@ function AssertionEditor({
 
         {/* ── Expanded form ── */}
         <CollapsibleContent>
-          <div className="border-t border-border p-4 space-y-4">
+          <div className={cn(
+            'border-t border-border p-4 space-y-4',
+            isLlm ? 'border-l-[3px] border-l-violet-500' : 'border-l-[3px] border-l-emerald-500',
+          )}>
 
             {/* Metric name */}
             <div>
@@ -674,8 +668,8 @@ function assertionsFromSuggestions(suggestions: AssertionSuggestion[]): Assertio
       ...(isLlmJudge
         ? {
             provider: {
-              id: 'openai:gpt-5-mini-2025-08-07',
-              config: { max_tokens: 30000, temperature: 0 },
+              id: vendorModelId(DEFAULT_VENDOR, DEFAULT_MODEL),
+              config: { max_tokens: 30000, temperature: DEFAULT_TEMPERATURE },
             },
           }
         : {}),
@@ -865,8 +859,10 @@ function GenerateAssertionsDialog({
 
 function AddAssertionPopover({
   onAdd,
+  onOpenAdvisor,
 }: {
   onAdd: (type: 'deterministic' | 'llm') => void;
+  onOpenAdvisor: () => void;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -916,6 +912,21 @@ function AddAssertionPopover({
             </p>
           </div>
         </button>
+        <div className="mx-2 my-1.5 border-t border-border" />
+        <button
+          className="w-full flex items-start gap-3 rounded-md px-2 py-2.5 text-left hover:bg-muted transition-colors"
+          onClick={() => { onOpenAdvisor(); setOpen(false); }}
+        >
+          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-amber-500/30 bg-amber-500/5">
+            <HelpCircle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+          </div>
+          <div>
+            <p className="text-sm font-medium leading-tight">Help Me Choose</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Not sure which type? Take a quick quiz
+            </p>
+          </div>
+        </button>
       </PopoverContent>
     </Popover>
   );
@@ -924,13 +935,50 @@ function AddAssertionPopover({
 // ─── AssertionsSection ────────────────────────────────────────────────────────
 
 export function AssertionsSection() {
-  const { config, addAssertion, updateAssertion, deleteAssertion, duplicateAssertion, replaceAllAssertions } =
+  const { config, addAssertion, updateAssertion, deleteAssertion, duplicateAssertion, replaceAllAssertions, deleteAssertionsByIds, deleteAllAssertions } =
     useEval();
   const [generateOpen, setGenerateOpen] = useState(false);
   const [generateMode, setGenerateMode] = useState<'generate' | 'additional' | 'regenerate'>('generate');
+  const [advisorOpen, setAdvisorOpen] = useState(false);
   const [newAssertionId, setNewAssertionId] = useState<string | null>(null);
   const [bulkToggle, setBulkToggle] = useState({ id: 0, expanded: true });
   const [pendingDeleteIndex, setPendingDeleteIndex] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+
+  const assertions = config.defaultTest.assert;
+  const hasAssertions = assertions.length > 0;
+  const allSelected = hasAssertions && selectedIds.size === assertions.length;
+  const someSelected = selectedIds.size > 0;
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(assertions.map((a) => a.id)));
+    }
+  };
+
+  const handleDeleteSelected = () => {
+    deleteAssertionsByIds(selectedIds);
+    toast.success(`Deleted ${selectedIds.size} assertion${selectedIds.size === 1 ? '' : 's'}`);
+    setSelectedIds(new Set());
+  };
+
+  const handleDeleteAll = () => {
+    deleteAllAssertions();
+    setSelectedIds(new Set());
+    setConfirmDeleteAll(false);
+    toast.success('All assertions deleted');
+  };
 
   const collapseAllAssertions = () =>
     setBulkToggle((t) => ({ id: t.id + 1, expanded: false }));
@@ -952,8 +1000,8 @@ export function AssertionsSection() {
         type: 'llm-rubric',
         value: '',
         provider: {
-          id: 'openai:gpt-5-mini-2025-08-07',
-          config: { max_tokens: 30000, temperature: 0 },
+          id: vendorModelId(DEFAULT_VENDOR, DEFAULT_MODEL),
+          config: { max_tokens: 30000, temperature: DEFAULT_TEMPERATURE },
         },
       });
     } else {
@@ -979,79 +1027,117 @@ export function AssertionsSection() {
     setGenerateOpen(true);
   };
 
-  const assertions = config.defaultTest.assert;
-  const hasAssertions = assertions.length > 0;
-
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle className="text-base font-medium">Assertions</CardTitle>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            {hasAssertions && (
-              <div className="flex items-center gap-1 border-r border-border pr-2 mr-0.5">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 gap-1 px-2 text-xs"
-                  onClick={expandAllAssertions}
-                >
-                  <ChevronUp className="h-3.5 w-3.5" />
-                  Expand all
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 gap-1 px-2 text-xs"
-                  onClick={collapseAllAssertions}
-                >
-                  <ChevronDown className="h-3.5 w-3.5" />
-                  Collapse all
-                </Button>
-              </div>
-            )}
-            {hasAssertions ? (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => openGenerate('additional')}
-                  className="gap-1.5"
-                >
-                  <Sparkles className="h-4 w-4" />
-                  Generate More
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => openGenerate('regenerate')}
-                  className="gap-1.5"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  Regenerate
-                </Button>
-              </>
-            ) : (
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-base font-medium text-foreground">Assertions</h2>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {hasAssertions && (
+            <div className="flex items-center gap-1 border-r border-border pr-2 mr-0.5">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1 px-2 text-xs"
+                onClick={expandAllAssertions}
+              >
+                <ChevronUp className="h-3.5 w-3.5" />
+                Expand all
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1 px-2 text-xs"
+                onClick={collapseAllAssertions}
+              >
+                <ChevronDown className="h-3.5 w-3.5" />
+                Collapse all
+              </Button>
+            </div>
+          )}
+          {hasAssertions ? (
+            <>
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => openGenerate('generate')}
+                onClick={() => openGenerate('additional')}
                 className="gap-1.5"
               >
                 <Sparkles className="h-4 w-4" />
-                Generate
+                Generate More
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => openGenerate('regenerate')}
+                className="gap-1.5"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Regenerate
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => openGenerate('generate')}
+              className="gap-1.5"
+            >
+              <Sparkles className="h-4 w-4" />
+              Generate
+            </Button>
+          )}
+          <AddAssertionPopover onAdd={handleAdd} onOpenAdvisor={() => setAdvisorOpen(true)} />
+        </div>
+      </div>
+
+      {/* ── Selection toolbar ── */}
+      {hasAssertions && (
+        <div className="mt-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              checked={allSelected}
+              onCheckedChange={toggleSelectAll}
+              aria-label="Select all assertions"
+            />
+            <span className="text-xs text-muted-foreground">
+              {someSelected
+                ? `${selectedIds.size} of ${assertions.length} selected`
+                : 'Select all'}
+            </span>
+            {someSelected && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs text-destructive hover:text-destructive"
+                onClick={handleDeleteSelected}
+              >
+                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                Delete Selected
               </Button>
             )}
-            <AddAssertionPopover onAdd={handleAdd} />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">
+              {assertions.length} assertion{assertions.length === 1 ? '' : 's'}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-destructive hover:text-destructive"
+              onClick={() => setConfirmDeleteAll(true)}
+            >
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+              Delete All
+            </Button>
           </div>
         </div>
-      </CardHeader>
+      )}
 
-      <CardContent>
+      <div className={hasAssertions ? 'mt-2' : 'mt-3'}>
         {assertions.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border px-6 py-8 text-center">
+          <div className="py-8 text-center">
             <p className="mb-4 text-sm text-muted-foreground">
               No assertions yet
             </p>
@@ -1085,6 +1171,13 @@ export function AssertionsSection() {
                 </div>
               </button>
             </div>
+            <button
+              className="mt-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => setAdvisorOpen(true)}
+            >
+              <HelpCircle className="h-3.5 w-3.5" />
+              Not sure which type? Let us help you decide
+            </button>
           </div>
         ) : (
           <div className="space-y-3">
@@ -1095,6 +1188,8 @@ export function AssertionsSection() {
                 index={index}
                 isNew={assertion.id === newAssertionId}
                 bulkToggle={bulkToggle}
+                selected={selectedIds.has(assertion.id)}
+                onToggleSelect={() => toggleSelect(assertion.id)}
                 onUpdate={(updated) => updateAssertion(index, updated)}
                 onDelete={() => setPendingDeleteIndex(index)}
                 onDuplicate={() => duplicateAssertion(index)}
@@ -1102,7 +1197,7 @@ export function AssertionsSection() {
             ))}
           </div>
         )}
-      </CardContent>
+      </div>
 
       <GenerateAssertionsDialog
         open={generateOpen}
@@ -1147,6 +1242,48 @@ export function AssertionsSection() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Card>
+
+      <AlertDialog open={confirmDeleteAll} onOpenChange={setConfirmDeleteAll}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete all assertions?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove all {assertions.length} assertion{assertions.length === 1 ? '' : 's'}. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleDeleteAll}
+            >
+              Delete All
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={advisorOpen} onOpenChange={setAdvisorOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <HelpCircle className="h-5 w-5 text-amber-500" />
+              Which assertion type do you need?
+            </DialogTitle>
+            <DialogDescription>
+              Answer a few quick questions and we&apos;ll recommend the right assertion type for your use case.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <AssertionAdvisor
+              onAddAssertion={(type) => {
+                handleAdd(type);
+                setAdvisorOpen(false);
+              }}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }

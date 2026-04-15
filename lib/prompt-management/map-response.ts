@@ -1,5 +1,6 @@
 import {
   defaultPromptVersionContent,
+  type PromptMessage,
   type PromptVersionContent,
 } from '@/lib/prompt-studio-types';
 
@@ -78,7 +79,7 @@ export function mapToPromptVersionContent(json: unknown): PromptVersionContent {
 
   const messagesRaw = nested.messages ?? o.messages;
   if (Array.isArray(messagesRaw)) {
-    const messages = messagesRaw
+    const messages: PromptMessage[] = messagesRaw
       .map((m) => {
         const mr = asRecord(m);
         if (!mr) return null;
@@ -88,11 +89,11 @@ export function mapToPromptVersionContent(json: unknown): PromptVersionContent {
           (role === 'system' || role === 'user' || role === 'assistant') &&
           typeof content === 'string'
         ) {
-          return { role, content };
+          return { role: role as PromptMessage['role'], content };
         }
         return null;
       })
-      .filter((x): x is NonNullable<typeof x> => x !== null);
+      .filter((x): x is PromptMessage => x !== null);
     if (messages.length > 0) base.messages = messages;
   }
 

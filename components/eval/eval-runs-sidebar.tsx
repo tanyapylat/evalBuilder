@@ -26,25 +26,24 @@ function FormattedDate({ dateString }: { dateString: string }) {
   }, [dateString]);
 
   if (!formatted) return null;
-  
+
   return <>{formatted}</>;
 }
 
 function runEffectiveStatus(run: EvalRun): 'InQueue' | 'InProgress' | 'Complete' | 'Error' {
   if (run.status) return run.status;
-  // Legacy sample runs without a status field are treated as Complete.
   return 'Complete';
 }
 
-function RunStatusIcon({ run, size = 'normal' }: { run: EvalRun; size?: 'normal' | 'small' }) {
+function RunStatusIcon({ run }: { run: EvalRun }) {
   const status = runEffectiveStatus(run);
   const isPassing = run.passRate >= 50;
-  const iconSize = size === 'small' ? 'h-3 w-3' : 'h-3 w-3';
-  const containerSize = size === 'small' ? 'h-5 w-5' : 'h-5 w-5';
+  const size = 'h-5 w-5';
+  const iconSize = 'h-3 w-3';
 
   if (status === 'InQueue') {
     return (
-      <div className={cn('flex items-center justify-center rounded-full bg-muted text-muted-foreground', containerSize)}>
+      <div className={cn('flex items-center justify-center rounded-full bg-muted text-muted-foreground', size)}>
         <Clock className={iconSize} />
       </div>
     );
@@ -52,7 +51,7 @@ function RunStatusIcon({ run, size = 'normal' }: { run: EvalRun; size?: 'normal'
 
   if (status === 'InProgress') {
     return (
-      <div className={cn('flex items-center justify-center rounded-full bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300', containerSize)}>
+      <div className={cn('flex items-center justify-center rounded-full bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300', size)}>
         <Loader2 className={cn(iconSize, 'animate-spin')} />
       </div>
     );
@@ -60,19 +59,18 @@ function RunStatusIcon({ run, size = 'normal' }: { run: EvalRun; size?: 'normal'
 
   if (status === 'Error') {
     return (
-      <div className={cn('flex items-center justify-center rounded-full bg-[#E85C41] text-white', containerSize)}>
+      <div className={cn('flex items-center justify-center rounded-full bg-[#E85C41] text-white', size)}>
         <X className={iconSize} />
       </div>
     );
   }
 
-  // Complete
   return isPassing ? (
-    <div className={cn('flex items-center justify-center rounded-full bg-[#00BF8F] text-white', containerSize)}>
-      <Check className={iconSize} />
+    <div className={cn('flex items-center justify-center rounded-full bg-[#00BF8F] text-white', size)}>
+      <Check className={iconSize} strokeWidth={3} />
     </div>
   ) : (
-    <div className={cn('flex items-center justify-center rounded-full bg-[#E85C41] text-white', containerSize)}>
+    <div className={cn('flex items-center justify-center rounded-full bg-[#E85C41] text-white', size)}>
       <X className={iconSize} />
     </div>
   );
@@ -102,7 +100,7 @@ export function EvalRunsSidebar({ collapsed, onToggle }: EvalRunsSidebarProps) {
           </TooltipTrigger>
           <TooltipContent side="left">Expand Evaluation Runs</TooltipContent>
         </Tooltip>
-        
+
         <div className="flex-1 flex flex-col items-center gap-1 py-2">
           {evalRuns.slice(0, 8).map((run) => {
             const status = runEffectiveStatus(run);
@@ -110,7 +108,7 @@ export function EvalRunsSidebar({ collapsed, onToggle }: EvalRunsSidebarProps) {
               <Tooltip key={run.id}>
                 <TooltipTrigger asChild>
                   <div className="flex h-8 w-8 items-center justify-center">
-                    <RunStatusIcon run={run} size="small" />
+                    <RunStatusIcon run={run} />
                   </div>
                 </TooltipTrigger>
                 <TooltipContent side="left">
@@ -127,15 +125,17 @@ export function EvalRunsSidebar({ collapsed, onToggle }: EvalRunsSidebarProps) {
 
   return (
     <div className="flex h-full flex-col overflow-hidden border-l border-border bg-card">
+      {/* Header */}
       <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
-        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={onToggle}>
+        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={onToggle}>
           <ChevronRight className="h-4 w-4" />
         </Button>
-        <h2 className="truncate text-base font-medium text-foreground">Evaluation Runs</h2>
+        <h2 className="text-base font-semibold text-foreground">Evaluation Runs</h2>
       </div>
 
+      {/* Run list */}
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="space-y-1 p-2">
+        <div className="space-y-0 py-1">
           {evalRuns.map((run) => {
             const status = runEffectiveStatus(run);
             const isPassing = run.passRate >= 50;
@@ -144,65 +144,69 @@ export function EvalRunsSidebar({ collapsed, onToggle }: EvalRunsSidebarProps) {
                 ? `${run.promptfooBaseUrl}/eval/${run.evalId}`
                 : null;
 
-            const content = (
-              <div className="flex items-start gap-2 rounded-md px-3 py-2.5 hover:bg-muted w-full">
-                <div className="mt-0.5 shrink-0">
-                  <RunStatusIcon run={run} />
-                </div>
-
-                <div className="min-w-0 flex-1 overflow-hidden">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="truncate font-medium text-foreground">{run.configName}</span>
-                    <span className="shrink-0 text-xs text-muted-foreground whitespace-nowrap">
-                      <FormattedDate dateString={run.runAt} />
-                    </span>
+            return (
+              <div key={run.id} className="border-b border-border/50 px-4 py-3 last:border-b-0">
+                <div className="flex items-start gap-2.5">
+                  {/* Status circle */}
+                  <div className="mt-0.5 shrink-0">
+                    <RunStatusIcon run={run} />
                   </div>
 
-                  <div className="flex items-center justify-between gap-2 mt-0.5">
-                    {status === 'Complete' ? (
-                      <span className={cn('truncate text-sm', isPassing ? 'text-[#009E76]' : 'text-[#D5391A]')}>
-                        Passed: {run.passRate}%
-                      </span>
-                    ) : status === 'Error' ? (
-                      <span className="truncate text-sm text-destructive">
-                        {run.errorMessage ?? 'Error'}
-                      </span>
-                    ) : (
-                      <span className="truncate text-sm text-muted-foreground">
-                        {status === 'InQueue' ? 'In queue…' : 'Running…'}
-                      </span>
-                    )}
-                    {status === 'Complete' && (
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {run.passedCount}/{run.totalCount}
-                      </span>
-                    )}
-                  </div>
+                  {/* Run details */}
+                  <div className="min-w-0 flex-1">
+                    {/* Pass rate + count */}
+                    <div className="flex items-baseline justify-between gap-2">
+                      {status === 'Complete' ? (
+                        <span className={cn('text-sm font-semibold', isPassing ? 'text-[#009E76]' : 'text-[#D5391A]')}>
+                          Passed: {run.passRate}%
+                        </span>
+                      ) : status === 'Error' ? (
+                        <span className="text-sm font-medium text-destructive">
+                          {run.errorMessage ?? 'Error'}
+                        </span>
+                      ) : (
+                        <span className="text-sm font-medium text-muted-foreground">
+                          {status === 'InQueue' ? 'In queue…' : 'Running…'}
+                        </span>
+                      )}
+                      {status === 'Complete' && (
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {run.passedCount}/{run.totalCount}
+                        </span>
+                      )}
+                    </div>
 
-                  <div className="flex items-center gap-1 mt-0.5">
-                    <span className="truncate text-xs text-muted-foreground">{run.runBy}</span>
-                    {promptfooLink && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <a
-                            href={promptfooLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="ml-auto shrink-0 text-muted-foreground hover:text-foreground"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                          </a>
-                        </TooltipTrigger>
-                        <TooltipContent side="left">View in Promptfoo</TooltipContent>
-                      </Tooltip>
-                    )}
+                    {/* Date */}
+                    <div className="mt-0.5 flex items-center justify-between gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        <FormattedDate dateString={run.runAt} />
+                      </span>
+                      {promptfooLink && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <a
+                              href={promptfooLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="shrink-0 text-muted-foreground hover:text-foreground"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          </TooltipTrigger>
+                          <TooltipContent side="left">View in Promptfoo</TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
+
+                    {/* User */}
+                    <div className="mt-0.5">
+                      <span className="text-xs text-muted-foreground">{run.runBy}</span>
+                    </div>
                   </div>
                 </div>
               </div>
             );
-
-            return <div key={run.id}>{content}</div>;
           })}
         </div>
       </div>

@@ -3,10 +3,10 @@
 import dynamic from 'next/dynamic';
 import { useState, type ComponentType } from 'react';
 import { toast } from 'sonner';
-import { Wand2, Save, X, Play, Loader2, Code } from 'lucide-react';
+import { CodeXml, ChevronDown, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { useEval } from '@/lib/eval-store';
 import { parseEvalConfigYaml } from '@/lib/yaml-utils';
 import { DescriptionSection } from './sections/description-section';
@@ -14,6 +14,7 @@ import { PromptsSection } from './sections/prompts-section';
 import { AssertionsSection } from './sections/assertions-section';
 import { DatasetSection } from './sections/dataset-section';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { EvalYamlEditorProps } from './eval-yaml-editor';
 
@@ -76,88 +77,115 @@ export function MainEditor() {
         onValueChange={handleMainTabChange}
         className="flex h-full min-h-0 flex-col gap-0"
       >
+        {/* ── Header chrome ── */}
         <div className="shrink-0 border-b border-border px-6 py-4">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <h1 className="text-base font-medium text-foreground">Prompt project name</h1>
-            <TabsList className="h-9 shrink-0">
-              <TabsTrigger value="form" className="text-xs">
-                Form
-              </TabsTrigger>
-              <TabsTrigger value="yaml" className="text-xs">
-                YAML
-              </TabsTrigger>
-            </TabsList>
-          </div>
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex-1">
+          {/* Row 1: Prompt project title */}
+          <h1 className="text-lg font-semibold text-foreground">Prompt project name</h1>
+
+          {/* Row 2: Config name + Form/YAML + action buttons */}
+          <div className="mt-3 flex items-end justify-between gap-4">
+            <div className="flex-1 max-w-sm">
               <label className="text-xs font-medium text-muted-foreground">Configuration Name</label>
               <Input
                 value={configName}
                 onChange={(e) => setConfigName(e.target.value)}
-                className="mt-2 max-w-md border-border bg-card"
+                className="mt-1 border-border bg-card"
                 placeholder="Enter configuration name"
               />
             </div>
+
             <div className="flex items-center gap-2">
+              {/* Edit / pencil icon */}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="text-muted-foreground"
+                    className="h-9 w-9 text-muted-foreground hover:text-foreground"
                     type="button"
-                    onClick={() => handleMainTabChange('yaml')}
-                    title="YAML"
+                    onClick={() => handleMainTabChange(mainTab === 'yaml' ? 'form' : 'yaml')}
                   >
-                    <Code className="h-5 w-5" />
+                    <CodeXml className="h-4 w-4" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>YAML</TooltipContent>
+                <TooltipContent>{mainTab === 'yaml' ? 'Switch to Form' : 'View YAML'}</TooltipContent>
               </Tooltip>
-              <Button variant="ghost" size="icon" className="text-muted-foreground" title="AI Correct YAML">
-                <Wand2 className="h-5 w-5" />
-              </Button>
-              <Button variant="default" onClick={handleSave} className="shadow-none">
-                <Save className="mr-2 h-4 w-4" />
-                Save
-              </Button>
+
+              {/* SAVE */}
               <Button
                 variant="outline"
-                className="border-primary text-primary shadow-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:bg-sidebar-accent/80"
+                onClick={handleSave}
+                className="border-border text-foreground shadow-none font-bold uppercase text-xs tracking-wide px-4"
               >
-                <X className="mr-2 h-4 w-4" />
+                Save
+              </Button>
+
+              {/* CANCEL */}
+              <Button
+                variant="outline"
+                className="border-border text-foreground shadow-none font-bold uppercase text-xs tracking-wide px-4"
+              >
                 Cancel
               </Button>
-              <Button className="shadow-none" onClick={handleRun} disabled={isRunning}>
-                {isRunning ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Play className="mr-2 h-4 w-4" />
-                )}
-                {isRunning ? 'Running…' : 'Run'}
-              </Button>
+
+              {/* RUN — solid primary with dropdown chevron */}
+              <div className="flex">
+                <Button
+                  className="rounded-r-none shadow-none font-bold uppercase text-xs tracking-wide px-5"
+                  onClick={handleRun}
+                  disabled={isRunning}
+                >
+                  {isRunning ? (
+                    <>
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                      Running…
+                    </>
+                  ) : (
+                    'Run'
+                  )}
+                </Button>
+                <Button
+                  className="rounded-l-none border-l border-primary-foreground/25 shadow-none px-2"
+                  disabled={isRunning}
+                  aria-label="Run options"
+                >
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
           </div>
-          <div className="mt-3 flex items-center gap-1.5 text-sm text-muted-foreground">
-            Eval relevancy:{' '}
-            <span className="italic">not calculated</span>
-            <button type="button" className="ml-1 text-sm text-primary hover:underline">
-              Calculate
-            </button>
+
+          {/* Row 3: Eval relevancy + view toggle */}
+          <div className="mt-3 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              Eval relevancy:
+              <span className="inline-flex h-5 items-center rounded-full bg-accent/15 px-2 text-xs font-semibold text-accent">
+                —
+              </span>
+              <button type="button" className="text-sm text-primary hover:underline">
+                View details
+              </button>
+            </div>
+
           </div>
         </div>
 
+        {/* ── Form tab ── */}
         <TabsContent value="form" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden">
           <ScrollArea className="flex-1">
-            <div className="space-y-6 p-6">
+            <div className="p-6">
               <DescriptionSection />
+              <Separator className="my-6" />
               <PromptsSection />
+              <Separator className="my-6" />
               <AssertionsSection />
+              <Separator className="my-6" />
               <DatasetSection />
             </div>
           </ScrollArea>
         </TabsContent>
 
+        {/* ── YAML tab ── */}
         <TabsContent
           value="yaml"
           className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden px-6 pb-6 pt-2 data-[state=inactive]:hidden"

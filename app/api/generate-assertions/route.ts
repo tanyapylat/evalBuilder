@@ -41,13 +41,22 @@ const bodySchema = z.object({
   ),
   testsSummary: z.string().optional(),
   instructions: z.string().optional(),
+  vendor: z.string().optional(),
+  model: z.string().optional(),
+  temperature: z.number().min(0).max(2).optional(),
 });
 
 const rawSuggestionSchema = z.object({
-  type: z.enum(['deterministic', 'llm']),
+  type: z.string().transform((v) => (v === 'llm' ? 'llm' : 'deterministic') as 'deterministic' | 'llm'),
   assertionType: z.string(),
   metric: z.string(),
-  value: z.string(),
+  value: z
+    .union([z.string(), z.number(), z.array(z.string())])
+    .transform((v) => {
+      if (typeof v === 'number') return String(v);
+      if (Array.isArray(v)) return v.join('\n');
+      return v;
+    }),
   explanation: z.string(),
 });
 
@@ -123,9 +132,11 @@ export async function POST(req: Request) {
     );
   }
 
-  const { prompts, existingAssertions, testsSummary, instructions } = parsed.data;
+  const { prompts, existingAssertions, testsSummary, instructions, vendor: requestedVendor, model: requestedModel, temperature: requestedTemperature } = parsed.data;
+  const vendor = requestedVendor?.trim() || 'openai';
   const model =
-    process.env.OPENAI_ASSERTION_MODEL?.trim() || 'gpt-4.1-2025-04-14';
+    requestedModel?.trim() || process.env.OPENAI_ASSERTION_MODEL?.trim() || 'gpt-4.1-2025-04-14';
+  const temperature = requestedTemperature ?? 0.25;
 
   const deterministicList = DETERMINISTIC_ASSERTIONS.filter(
     (t) => !DISALLOWED_GENERATION_TYPES.has(t),
@@ -197,8 +208,8 @@ Field rules:
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model,
-        temperature: 0.25,
+        model: vendor === 'openai' ? model : `${vendor}/${model}`,
+        temperature,
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: systemPrompt },
@@ -229,9 +240,17 @@ Field rules:
     );
   }
 
-  const choices = (completionJson as { choices?: Array<{ message?: { content?: string } }> })
-    .choices;
-  const text = choices?.[0]?.message?.content;
+  const choices = (
+    completionJson as {
+      choices?: Array<{
+        message?: { content?: string };
+        finish_reason?: string;
+      }>;
+    }
+  ).choices;
+  const firstChoice = choices?.[0];
+  const text = firstChoice?.message?.content;
+
   if (!text || typeof text !== 'string') {
     return NextResponse.json(
       { error: 'OpenAI returned an empty completion.' },
@@ -239,10 +258,19 @@ Field rules:
     );
   }
 
+  if (firstChoice?.finish_reason === 'length') {
+    return NextResponse.json(
+      { error: 'Model response was cut off. Try reducing the number of prompts or assertions.' },
+      { status: 502 },
+    );
+  }
+
   let envelope: z.infer<typeof openAiEnvelopeSchema>;
   try {
-    envelope = openAiEnvelopeSchema.parse(JSON.parse(stripJsonFence(text)));
-  } catch {
+    const parsed = JSON.parse(stripJsonFence(text));
+    envelope = openAiEnvelopeSchema.parse(parsed);
+  } catch (e) {
+    console.error('[generate-assertions] Failed to parse model output:', text, e);
     return NextResponse.json(
       { error: 'Could not parse model output as JSON.' },
       { status: 502 },
