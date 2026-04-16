@@ -21,10 +21,11 @@ import { useEval } from '@/lib/eval-store';
 import { type PromptConfig, DEFAULT_VENDOR, DEFAULT_MODEL, DEFAULT_TEMPERATURE } from '@/lib/eval-types';
 import { ModelSettingsFields, type ModelSettingsValues } from '@/components/eval/model-settings-fields';
 import type { VersionOption } from '@/lib/prompt-catalog';
-import { usePromptCatalog } from '@/lib/prompt-catalog';
+import { usePromptCatalog, DEMO_RESOLVED_PROJECT_ID, DEMO_RESOLVED_VERSION_ID } from '@/lib/prompt-catalog';
 import { usePromptDrafts } from '@/lib/prompt-drafts-context';
 import { PromptProjectCombobox } from '@/components/prompt-studio/prompt-project-combobox';
 import { EmbeddedPromptEditor } from '@/components/prompt-studio/embedded-prompt-editor';
+import { Badge } from '@/components/ui/badge';
 
 interface PromptEditorProps {
   prompt: PromptConfig;
@@ -68,6 +69,12 @@ function PromptEditor({
 
   const projectInList = projectOptions.some((p) => p.id === projectId);
   const versionInList = versions.some((v) => v.id === versionId);
+  const resolvedProjectId = String(prompt.promptId) === '{{currentPromptProjectId}}'
+    ? DEMO_RESOLVED_PROJECT_ID
+    : String(prompt.promptId);
+  const isCurrentProject = resolvedProjectId === DEMO_RESOLVED_PROJECT_ID;
+  const isCurrentVersion = (vid: string) =>
+    isCurrentProject && vid === DEMO_RESOLVED_VERSION_ID;
 
   const applyProjectChange = useCallback(
     async (newProjectId: string) => {
@@ -160,6 +167,7 @@ function PromptEditor({
               onValueChange={tryProjectChange}
               disabled={projectsLoading}
               className="mt-1.5"
+              currentProjectId={DEMO_RESOLVED_PROJECT_ID}
             />
             {!projectInList && (
               <p className="text-muted-foreground mt-1 text-xs">
@@ -171,7 +179,7 @@ function PromptEditor({
           <div>
             <Label className="text-xs font-medium text-muted-foreground">Version</Label>
             <Select value={versionId} onValueChange={tryVersionChange}>
-              <SelectTrigger className="mt-1.5 h-9">
+              <SelectTrigger className="mt-1.5 h-9 bg-muted/50">
                 <SelectValue placeholder="Select version" />
               </SelectTrigger>
               <SelectContent>
@@ -180,9 +188,16 @@ function PromptEditor({
                     Version {versionId}
                   </SelectItem>
                 )}
-                {versions.map((version) => (
+                {versions
+                  .filter((v) => v.id !== '{{currentPromptVersionId}}')
+                  .map((version) => (
                   <SelectItem key={version.id} value={version.id}>
-                    {version.name}
+                    <span className="flex items-center gap-1.5">
+                      {version.name}
+                      {isCurrentVersion(version.id) && (
+                        <Badge className="text-[10px] px-1.5 py-0 bg-emerald-100 text-emerald-700 border-emerald-200">current</Badge>
+                      )}
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -229,16 +244,8 @@ function PromptEditor({
       </Button>
       {/* Keep editor mounted while collapsed so unsaved edits persist (15.5). */}
       <div className={expanded ? '' : 'hidden'} aria-hidden={!expanded}>
-        <EmbeddedPromptEditor
-          promptProjectId={prompt.promptId}
-          versionId={prompt.versionId}
-          onUnsavedChange={handleUnsavedChange}
-          onVersionCreated={handleVersionCreated}
-          onPromptContentChange={(content) => setLivePromptContent(prompt, content)}
-        />
-
         {/* Model settings */}
-        <div className="mt-4 rounded-lg border border-dashed border-border p-4 space-y-3">
+        <div className="mb-4 rounded-lg border border-dashed border-border p-4 space-y-3">
           <div className="flex items-center gap-2 text-sm font-medium text-foreground">
             <Settings2 className="h-4 w-4 text-muted-foreground" />
             Model Settings
@@ -261,6 +268,14 @@ function PromptEditor({
             }
           />
         </div>
+
+        <EmbeddedPromptEditor
+          promptProjectId={prompt.promptId}
+          versionId={prompt.versionId}
+          onUnsavedChange={handleUnsavedChange}
+          onVersionCreated={handleVersionCreated}
+          onPromptContentChange={(content) => setLivePromptContent(prompt, content)}
+        />
       </div>
 
       <AlertDialog

@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { Check, ChevronsUpDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import {
   Command,
   CommandEmpty,
@@ -25,6 +26,8 @@ interface PromptProjectComboboxProps {
   onValueChange: (projectId: string) => void;
   disabled?: boolean;
   className?: string;
+  /** Project ID to label as "current" (e.g. the Prompt Studio active project). */
+  currentProjectId?: string;
 }
 
 export function PromptProjectCombobox({
@@ -33,10 +36,12 @@ export function PromptProjectCombobox({
   onValueChange,
   disabled,
   className,
+  currentProjectId,
 }: PromptProjectComboboxProps) {
   const [open, setOpen] = React.useState(false);
 
   const selected = projects.find((p) => p.id === value);
+  const isCurrent = (id: string) => !!currentProjectId && id === currentProjectId;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -46,13 +51,16 @@ export function PromptProjectCombobox({
           role="combobox"
           aria-expanded={open}
           disabled={disabled}
-          className={cn('mt-1.5 w-full justify-between font-normal', className)}
+          className={cn('mt-1.5 w-full justify-between font-normal bg-muted/50 hover:bg-muted hover:text-foreground', className)}
         >
           <span className="truncate text-left">
             {selected ? (
               <>
                 <span className="font-medium">{selected.name}</span>
                 <span className="text-muted-foreground ml-2 text-xs">ID {selected.id}</span>
+                {isCurrent(selected.id) && (
+                  <Badge className="ml-2 text-[10px] px-1.5 py-0 bg-emerald-100 text-emerald-700 border-emerald-200">current</Badge>
+                )}
               </>
             ) : (
               <span className="text-muted-foreground">Select project…</span>
@@ -75,7 +83,9 @@ export function PromptProjectCombobox({
           <CommandList>
             <CommandEmpty>No project found.</CommandEmpty>
             <CommandGroup>
-              {projects.map((project) => (
+              {projects
+                .filter((p) => p.id !== '{{currentPromptProjectId}}')
+                .map((project) => (
                 <CommandItem
                   key={project.id}
                   value={project.id}
@@ -91,7 +101,12 @@ export function PromptProjectCombobox({
                     )}
                   />
                   <div className="flex flex-col gap-0.5">
-                    <span>{project.name}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span>{project.name}</span>
+                      {isCurrent(project.id) && (
+                        <Badge className="text-[10px] px-1.5 py-0 bg-emerald-100 text-emerald-700 border-emerald-200">current</Badge>
+                      )}
+                    </div>
                     <span className="text-muted-foreground text-xs">ID {project.id}</span>
                   </div>
                 </CommandItem>

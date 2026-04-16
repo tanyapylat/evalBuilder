@@ -4,9 +4,9 @@ import { useState, useCallback } from 'react';
 import {
   ChevronRight,
   RotateCcw,
-  CheckCircle2,
   Bot,
   Search,
+  Code2,
   ChevronDown,
   Lightbulb,
   ArrowRight,
@@ -23,7 +23,6 @@ import {
   type AdvisorResult,
   type QuestionNode,
   getNode,
-  getStartNode,
   getQuestionNumber,
   isResultNode,
   QUESTION_IDS,
@@ -31,7 +30,36 @@ import {
 
 interface AssertionAdvisorProps {
   onResult?: (result: AdvisorResult) => void;
-  onAddAssertion?: (type: 'deterministic' | 'llm') => void;
+  onAddAssertion?: (type: 'deterministic' | 'llm' | 'code') => void;
+}
+
+const RESULT_STYLES = {
+  deterministic: {
+    border: 'border-emerald-500/30 bg-emerald-500/5',
+    icon: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+    label: 'Deterministic Assertion',
+    addLabel: 'Deterministic',
+    Icon: Search,
+  },
+  llm_judge: {
+    border: 'border-violet-500/30 bg-violet-500/5',
+    icon: 'bg-violet-500/15 text-violet-600 dark:text-violet-400',
+    label: 'LLM as Judge Assertion',
+    addLabel: 'LLM as Judge',
+    Icon: Bot,
+  },
+  code: {
+    border: 'border-blue-500/30 bg-blue-500/5',
+    icon: 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
+    label: 'Custom Code Assertion',
+    addLabel: 'Custom Code',
+    Icon: Code2,
+  },
+} as const;
+
+function mapRecommendationToAddType(rec: AdvisorResult['recommendation']): 'deterministic' | 'llm' | 'code' {
+  if (rec === 'llm_judge') return 'llm';
+  return rec;
 }
 
 export function AssertionAdvisor({
@@ -73,39 +101,25 @@ export function AssertionAdvisor({
 
   if (isResult) {
     const { result } = node;
-    const isDet = result.recommendation === 'deterministic';
+    const style = RESULT_STYLES[result.recommendation];
+    const { Icon } = style;
 
     return (
       <div className="space-y-4">
         {/* Result header */}
-        <div
-          className={cn(
-            'rounded-lg border p-4',
-            isDet
-              ? 'border-emerald-500/30 bg-emerald-500/5'
-              : 'border-violet-500/30 bg-violet-500/5',
-          )}
-        >
+        <div className={cn('rounded-lg border p-4', style.border)}>
           <div className="flex items-start gap-3">
             <div
               className={cn(
                 'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
-                isDet
-                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                  : 'bg-violet-500/15 text-violet-600 dark:text-violet-400',
+                style.icon,
               )}
             >
-              {isDet ? (
-                <Search className="h-4.5 w-4.5" />
-              ) : (
-                <Bot className="h-4.5 w-4.5" />
-              )}
+              <Icon className="h-4.5 w-4.5" />
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-sm font-semibold">
-                  {isDet ? 'Deterministic Assertion' : 'LLM as Judge Assertion'}
-                </h3>
+                <h3 className="text-sm font-semibold">{style.label}</h3>
                 <Badge
                   variant="outline"
                   className={cn(
@@ -128,7 +142,9 @@ export function AssertionAdvisor({
         {/* Examples */}
         <div className="rounded-lg border border-border bg-muted/30 p-4">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2.5">
-            Suggested assertion types
+            {result.recommendation === 'code'
+              ? 'Common use cases'
+              : 'Suggested assertion types'}
           </p>
           <div className="flex flex-wrap gap-1.5">
             {result.examples.map((ex) => (
@@ -160,18 +176,24 @@ export function AssertionAdvisor({
           <CollapsibleContent>
             <div className="mt-2 rounded-lg border border-border bg-muted/20 p-3 text-xs text-muted-foreground space-y-2 leading-relaxed">
               <p>
-                <span className="font-medium text-foreground">Deterministic assertions</span> work
-                best when the output can be checked by exact rules, logic, schema, regex, required
-                fields, forbidden phrases, or fixed values.
+                <span className="font-medium text-foreground">Deterministic assertions</span> are
+                fastest and most reliable when the output can be checked by exact rules — keyword
+                match, regex, JSON structure, or numeric thresholds.
               </p>
               <p>
-                <span className="font-medium text-foreground">LLM-as-Judge assertions</span> work
-                best when evaluation requires interpretation, semantic understanding, tone,
-                relevance, completeness, or when multiple valid outputs may exist.
+                <span className="font-medium text-foreground">Custom Code assertions</span> (JavaScript
+                or Python) are ideal when you need multi-step logic, data parsing, computed checks, or
+                multiple conditions combined — more power than built-in checks but still rule-based.
+              </p>
+              <p>
+                <span className="font-medium text-foreground">LLM-as-Judge assertions</span> are
+                best when evaluation requires interpretation, semantic understanding, tone, relevance,
+                or when multiple valid outputs may exist.
               </p>
               <p className="pt-1 border-t border-border">
-                Some use cases benefit from both: deterministic checks for structure and LLM judge
-                for quality.
+                Many use cases benefit from combining types: e.g. a deterministic check for required
+                structure + an LLM judge for quality, or custom code for complex validation + an LLM
+                judge for tone.
               </p>
             </div>
           </CollapsibleContent>
@@ -183,12 +205,10 @@ export function AssertionAdvisor({
             <Button
               size="sm"
               className="gap-1.5"
-              onClick={() =>
-                onAddAssertion(isDet ? 'deterministic' : 'llm')
-              }
+              onClick={() => onAddAssertion(mapRecommendationToAddType(result.recommendation))}
             >
               <ArrowRight className="h-3.5 w-3.5" />
-              Add {isDet ? 'Deterministic' : 'LLM as Judge'} Assertion
+              Add {style.addLabel} Assertion
             </Button>
           )}
           <Button variant="outline" size="sm" className="gap-1.5" onClick={handleRestart}>
@@ -241,13 +261,13 @@ export function AssertionAdvisor({
       </div>
 
       {/* Answer buttons */}
-      <div className="grid grid-cols-2 gap-2">
+      <div className="space-y-2">
         {questionNode.answers.map((answer) => (
           <button
             key={answer.label}
             onClick={() => handleAnswer(answer.nextId)}
             className={cn(
-              'group flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3',
+              'group flex w-full items-center justify-between rounded-lg border border-border bg-card px-4 py-3',
               'text-left text-sm font-medium transition-all',
               'hover:border-primary/40 hover:bg-primary/5 hover:shadow-sm',
               'active:scale-[0.98]',

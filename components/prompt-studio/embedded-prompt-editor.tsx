@@ -207,7 +207,7 @@ export function EmbeddedPromptEditor({
 
   return (
     <div className={cn('space-y-3', className)}>
-      <div className="flex flex-wrap items-center gap-2 pt-2 pb-2">
+      <div className="flex flex-wrap items-center gap-2">
         {contentLoading && <Spinner className="text-muted-foreground" />}
         {unsaved && !contentLoading && (
           <Badge variant="secondary" className="font-normal">
@@ -215,9 +215,6 @@ export function EmbeddedPromptEditor({
           </Badge>
         )}
         <div className="ml-auto flex items-center gap-2">
-          <Button type="button" size="sm" className="m-0" onClick={handleSaveNewVersion} disabled={contentLoading}>
-            Save as new version
-          </Button>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -233,6 +230,9 @@ export function EmbeddedPromptEditor({
             </TooltipTrigger>
             <TooltipContent>View config</TooltipContent>
           </Tooltip>
+          <Button type="button" size="sm" className="m-0" onClick={handleSaveNewVersion} disabled={contentLoading}>
+            Save as new version
+          </Button>
         </div>
       </div>
 

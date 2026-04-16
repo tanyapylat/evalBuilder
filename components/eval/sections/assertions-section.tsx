@@ -16,6 +16,7 @@ import {
   Bot,
   RefreshCw,
   HelpCircle,
+  Code2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -81,6 +82,7 @@ import {
   type JudgeProviderConfig,
 } from '@/lib/eval-types';
 import { ModelSettingsFields, type ModelSettingsValues } from '@/components/eval/model-settings-fields';
+import { CodeAssertionEditor } from '@/components/eval/code-assertion-editor';
 import { generateId } from '@/lib/yaml-utils';
 import { cn } from '@/lib/utils';
 import { type AssertionSuggestion } from '@/lib/ai-assistance';
@@ -98,6 +100,7 @@ const ARRAY_TYPES: AssertionType[] = [
   'not-icontains-any',
 ];
 const NUMERIC_TYPES: AssertionType[] = ['cost', 'latency', 'levenshtein'];
+const CODE_TYPES: AssertionType[] = ['javascript', 'python'];
 const NO_VALUE_TYPES: AssertionType[] = [
   'is-json',
   'contains-json',
@@ -108,6 +111,7 @@ const NO_VALUE_TYPES: AssertionType[] = [
 
 const isArrayType = (t: AssertionType) => ARRAY_TYPES.includes(t);
 const isNumericType = (t: AssertionType) => NUMERIC_TYPES.includes(t);
+const isCodeType = (t: AssertionType) => CODE_TYPES.includes(t);
 const isWordCountType = (t: AssertionType) => t === 'wordCount';
 const isNoValueType = (t: AssertionType) => NO_VALUE_TYPES.includes(t);
 
@@ -115,6 +119,12 @@ const isNoValueType = (t: AssertionType) => NO_VALUE_TYPES.includes(t);
 
 function getValuePreview(a: Assertion): string {
   if (isNoValueType(a.type)) return '';
+  if (isCodeType(a.type)) {
+    const code = String(a.value ?? '').trim();
+    if (!code) return '(empty)';
+    const firstLine = code.split('\n').find((l) => l.trim() && !l.trim().startsWith('//') && !l.trim().startsWith('#'));
+    return firstLine ? (firstLine.length > 50 ? firstLine.slice(0, 50) + '…' : firstLine) : code.slice(0, 50) + '…';
+  }
   if (a.type === 'wordCount') {
     try {
       const p = JSON.parse(String(a.value)) as { min?: number; max?: number };
@@ -345,30 +355,44 @@ function AssertionEditor({
   }, [isNew]);
 
   const isLlm = LLM_ASSERTIONS.includes(assertion.type);
+  const isCode = isCodeType(assertion.type);
   const info = ASSERTION_INFO[assertion.type];
   const preview = getValuePreview(assertion);
+
+  const categoryLabel = isLlm ? 'LLM' : isCode ? 'Code' : 'Deterministic';
+  const categoryColor = isLlm
+    ? { border: 'border-violet-500/30 ring-violet-500/10', left: 'border-l-violet-500', badge: 'border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-400' }
+    : isCode
+      ? { border: 'border-blue-500/30 ring-blue-500/10', left: 'border-l-blue-500', badge: 'border-blue-500/40 bg-blue-500/10 text-blue-600 dark:text-blue-400' }
+      : { border: 'border-emerald-500/30 ring-emerald-500/10', left: 'border-l-emerald-500', badge: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' };
 
   // ── Assertion type change ───────────────────────────────────────────────────
   const handleTypeChange = (newType: AssertionType) => {
     const wasArray = isArrayType(assertion.type);
     const willBeArray = isArrayType(newType);
     const willBeNoValue = isNoValueType(newType);
+    const willBeCode = isCodeType(newType);
+    const wasCode = isCodeType(assertion.type);
     onUpdate({
       ...assertion,
       type: newType,
       value: willBeNoValue
         ? ''
-        : wasArray && !willBeArray
+        : willBeCode && !wasCode
           ? ''
-          : !wasArray && willBeArray
-            ? []
-            : assertion.value,
+          : wasCode && !willBeCode
+            ? ''
+            : wasArray && !willBeArray
+              ? ''
+              : !wasArray && willBeArray
+                ? []
+                : assertion.value,
     });
   };
 
-  // ── Deterministic categories (exclude LLM as Judge) ────────────────────────
+  // ── Deterministic categories (exclude LLM as Judge and Custom Code) ────────
   const deterministicCategories = Object.entries(ASSERTION_CATEGORIES).filter(
-    ([cat]) => cat !== 'LLM as Judge',
+    ([cat]) => cat !== 'LLM as Judge' && cat !== 'Custom Code',
   );
 
   return (
@@ -377,9 +401,8 @@ function AssertionEditor({
         ref={containerRef}
         className={cn(
           'rounded-lg border bg-card overflow-hidden',
-          isLlm
-            ? 'border-violet-500/30 ring-1 ring-violet-500/10'
-            : 'border-emerald-500/30 ring-1 ring-emerald-500/10',
+          categoryColor.border,
+          'ring-1',
           selected && 'ring-2 ring-primary/30 bg-primary/[0.02]',
         )}
       >
@@ -389,7 +412,8 @@ function AssertionEditor({
           <div
             className={cn(
               'flex cursor-pointer items-center gap-3 p-3 hover:bg-muted/50',
-              isLlm ? 'border-l-[3px] border-l-violet-500' : 'border-l-[3px] border-l-emerald-500',
+              'border-l-[3px]',
+              categoryColor.left,
             )}
           >
             <Checkbox
@@ -406,12 +430,10 @@ function AssertionEditor({
                 variant="outline"
                 className={cn(
                   'shrink-0 text-xs font-normal',
-                  isLlm
-                    ? 'border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-400'
-                    : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+                  categoryColor.badge,
                 )}
               >
-                {isLlm ? 'LLM' : 'Deterministic'}
+                {categoryLabel}
               </Badge>
               <span className="text-sm font-medium">{assertion.type}</span>
               {assertion.metric && (
@@ -457,7 +479,8 @@ function AssertionEditor({
         <CollapsibleContent>
           <div className={cn(
             'border-t border-border p-4 space-y-4',
-            isLlm ? 'border-l-[3px] border-l-violet-500' : 'border-l-[3px] border-l-emerald-500',
+            'border-l-[3px]',
+            categoryColor.left,
           )}>
 
             {/* Metric name */}
@@ -478,9 +501,8 @@ function AssertionEditor({
             </div>
 
             {/* ── Deterministic fields ── */}
-            {!isLlm && (
+            {!isLlm && !isCode && (
               <>
-                {/* 3. Assertion type selector */}
                 <div>
                   <Label className="text-xs font-medium text-muted-foreground">Assertion Type</Label>
                   <Select
@@ -504,7 +526,6 @@ function AssertionEditor({
                     </SelectContent>
                   </Select>
 
-                  {/* Info alert */}
                   {info && (
                     <Alert className="mt-2 border-muted bg-muted/40 px-3 py-2">
                       <Info className="h-3.5 w-3.5" />
@@ -520,7 +541,6 @@ function AssertionEditor({
                   )}
                 </div>
 
-                {/* 4. Value field */}
                 {!isNoValueType(assertion.type) && (
                   <div>
                     <Label className="text-xs font-medium text-muted-foreground">
@@ -583,7 +603,6 @@ function AssertionEditor({
                   </div>
                 )}
 
-                {/* Similarity threshold */}
                 {assertion.type === 'similar' && (
                   <div>
                     <Label className="text-xs font-medium text-muted-foreground">
@@ -606,29 +625,138 @@ function AssertionEditor({
               </>
             )}
 
+            {/* ── Custom Code (JavaScript / Python) fields ── */}
+            {isCode && (
+              <>
+                <div>
+                  <Label className="text-xs font-medium text-muted-foreground">Language</Label>
+                  <Select
+                    value={assertion.type}
+                    onValueChange={(v) => handleTypeChange(v as AssertionType)}
+                  >
+                    <SelectTrigger className="mt-1.5 h-9 w-48">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="javascript">JavaScript</SelectItem>
+                      <SelectItem value="python">Python</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label className="text-xs font-medium text-muted-foreground">
+                    Validation Code
+                  </Label>
+                  <Alert className="mt-1.5 mb-2 border-muted bg-muted/40 px-3 py-2">
+                    <Info className="h-3.5 w-3.5" />
+                    <AlertDescription className="text-xs">
+                      {assertion.type === 'python' ? (
+                        <>
+                          <span className="font-medium text-foreground">
+                            Variables: <code className="rounded bg-background px-1">output</code> (LLM response string), <code className="rounded bg-background px-1">context</code> (dict with prompt, vars, test, config).
+                          </span>
+                          <span className="text-muted-foreground">
+                            {' '}Return <code className="rounded bg-background px-1">True/False</code>, a <code className="rounded bg-background px-1">float</code> score, or a dict with <code className="rounded bg-background px-1">pass</code>/<code className="rounded bg-background px-1">score</code>/<code className="rounded bg-background px-1">reason</code>.
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-medium text-foreground">
+                            Variables: <code className="rounded bg-background px-1">output</code> (LLM response string), <code className="rounded bg-background px-1">context</code> (object with prompt, vars, test).
+                          </span>
+                          <span className="text-muted-foreground">
+                            {' '}Return <code className="rounded bg-background px-1">true/false</code>, a numeric score, or a <code className="rounded bg-background px-1">{'{ pass, score, reason }'}</code> object.
+                          </span>
+                        </>
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                  <div className="mt-1.5">
+                    <CodeAssertionEditor
+                      language={assertion.type === 'python' ? 'python' : 'javascript'}
+                      value={typeof assertion.value === 'string' ? assertion.value : String(assertion.value ?? '')}
+                      onChange={(v) => onUpdate({ ...assertion, value: v })}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <Label className="text-xs font-medium text-muted-foreground">
+                    Score Threshold{' '}
+                    <span className="font-normal">(optional, 0 – 1)</span>
+                  </Label>
+                  <p className="text-xs text-muted-foreground mt-0.5 mb-1.5">
+                    If your code returns a numeric score, values at or above this threshold pass.
+                  </p>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={assertion.threshold ?? ''}
+                    onChange={(e) =>
+                      onUpdate({
+                        ...assertion,
+                        threshold: e.target.value ? parseFloat(e.target.value) : undefined,
+                      })
+                    }
+                    placeholder="e.g. 0.5"
+                    className="w-32"
+                  />
+                </div>
+              </>
+            )}
+
             {/* ── LLM as Judge fields ── */}
             {isLlm && (
               <>
-                {/* Rubric */}
                 <div>
-                  <Label className="text-xs font-medium text-muted-foreground">
-                    Rubric / Instructions
-                  </Label>
-                  <Textarea
-                    value={
-                      typeof assertion.value === 'string'
-                        ? assertion.value
-                        : String(assertion.value ?? '')
-                    }
-                    onChange={(e) =>
-                      onUpdate({ ...assertion, value: e.target.value })
-                    }
-                    placeholder={'Describe what the LLM judge should check.\n\nExample: "PASS only if the response is friendly, professional, and directly addresses the user\'s question."'}
-                    className="mt-1.5 min-h-[120px]"
-                  />
+                  <Label className="text-xs font-medium text-muted-foreground">Judge Type</Label>
+                  <Select
+                    value={assertion.type}
+                    onValueChange={(v) => handleTypeChange(v as AssertionType)}
+                  >
+                    <SelectTrigger className="mt-1.5 h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(ASSERTION_CATEGORIES['LLM as Judge'] ?? []).map((t) => (
+                        <SelectItem key={t} value={t}>
+                          <div className="flex flex-col">
+                            <span>{t}</span>
+                            {ASSERTION_INFO[t] && (
+                              <span className="text-xs text-muted-foreground">
+                                {ASSERTION_INFO[t].description}
+                              </span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
-                {/* Judge model settings */}
+                {!isNoValueType(assertion.type) && (
+                  <div>
+                    <Label className="text-xs font-medium text-muted-foreground">
+                      Rubric / Instructions
+                    </Label>
+                    <Textarea
+                      value={
+                        typeof assertion.value === 'string'
+                          ? assertion.value
+                          : String(assertion.value ?? '')
+                      }
+                      onChange={(e) =>
+                        onUpdate({ ...assertion, value: e.target.value })
+                      }
+                      placeholder={'Describe what the LLM judge should check.\n\nExample: "PASS only if the response is friendly, professional, and directly addresses the user\'s question."'}
+                      className="mt-1.5 min-h-[120px]"
+                    />
+                  </div>
+                )}
+
                 <JudgeSettings assertion={assertion} onUpdate={onUpdate} />
               </>
             )}
@@ -861,12 +989,12 @@ function AddAssertionPopover({
   onAdd,
   onOpenAdvisor,
 }: {
-  onAdd: (type: 'deterministic' | 'llm') => void;
+  onAdd: (type: 'deterministic' | 'llm' | 'code') => void;
   onOpenAdvisor: () => void;
 }) {
   const [open, setOpen] = useState(false);
 
-  const choose = (type: 'deterministic' | 'llm') => {
+  const choose = (type: 'deterministic' | 'llm' | 'code') => {
     onAdd(type);
     setOpen(false);
   };
@@ -909,6 +1037,20 @@ function AddAssertionPopover({
             <p className="text-sm font-medium leading-tight">LLM as Judge</p>
             <p className="text-xs text-muted-foreground mt-0.5">
               Tone, quality, subjective checks
+            </p>
+          </div>
+        </button>
+        <button
+          className="w-full flex items-start gap-3 rounded-md px-2 py-2.5 text-left hover:bg-muted transition-colors"
+          onClick={() => choose('code')}
+        >
+          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-blue-500/30 bg-blue-500/5">
+            <Code2 className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+          </div>
+          <div>
+            <p className="text-sm font-medium leading-tight">Custom Code</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              JavaScript or Python validation
             </p>
           </div>
         </button>
@@ -992,7 +1134,7 @@ export function AssertionsSection() {
     }
   };
 
-  const handleAdd = (type: 'deterministic' | 'llm') => {
+  const handleAdd = (type: 'deterministic' | 'llm' | 'code') => {
     const id = generateId();
     if (type === 'llm') {
       addAssertion({
@@ -1003,6 +1145,12 @@ export function AssertionsSection() {
           id: vendorModelId(DEFAULT_VENDOR, DEFAULT_MODEL),
           config: { max_tokens: 30000, temperature: DEFAULT_TEMPERATURE },
         },
+      });
+    } else if (type === 'code') {
+      addAssertion({
+        id,
+        type: 'javascript',
+        value: '',
       });
     } else {
       addAssertion({
@@ -1141,7 +1289,7 @@ export function AssertionsSection() {
             <p className="mb-4 text-sm text-muted-foreground">
               No assertions yet
             </p>
-            <div className="flex justify-center gap-2">
+            <div className="flex flex-wrap justify-center gap-2">
               <button
                 className="flex items-center gap-2.5 rounded-lg border border-border bg-card px-4 py-3 text-left hover:bg-muted transition-colors"
                 onClick={() => handleAdd('deterministic')}
@@ -1167,6 +1315,20 @@ export function AssertionsSection() {
                   <p className="text-sm font-medium">Add LLM as Judge</p>
                   <p className="text-xs text-muted-foreground">
                     Tone, quality, subjective…
+                  </p>
+                </div>
+              </button>
+              <button
+                className="flex items-center gap-2.5 rounded-lg border border-border bg-card px-4 py-3 text-left hover:bg-muted transition-colors"
+                onClick={() => handleAdd('code')}
+              >
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-blue-500/30 bg-blue-500/5">
+                  <Code2 className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Add Custom Code</p>
+                  <p className="text-xs text-muted-foreground">
+                    JavaScript or Python
                   </p>
                 </div>
               </button>

@@ -94,9 +94,9 @@ const SEED_CONTENT: Record<string, PromptVersionContent> = (() => {
     params: { temperature: 0, max_tokens: 3000 },
   };
   return {
-    [`${DEMO_RESOLVED_PROJECT_ID}:17905`]: crm17905,
-    [`${DEMO_RESOLVED_PROJECT_ID}:17903`]: clonePromptVersionContent(crm17905),
-    [`${DEMO_RESOLVED_PROJECT_ID}:14631`]: crm14631,
+    '2735:17905': crm17905,
+    '2735:17903': clonePromptVersionContent(crm17905),
+    '2735:14631': crm14631,
     '1234:56789': p1234,
     '1234:56781': clonePromptVersionContent(p1234),
     '1234:56782': clonePromptVersionContent(p1234),
@@ -122,13 +122,8 @@ function mergeVersionLists(a: VersionOption[], b: VersionOption[]): VersionOptio
   return Array.from(m.values());
 }
 
-function ensureCurrentProjectRow(rows: PromptProjectOption[]): PromptProjectOption[] {
-  const placeholder: PromptProjectOption = {
-    id: '{{currentPromptProjectId}}',
-    name: 'Current Prompt Project',
-  };
-  if (rows.some((r) => r.id === placeholder.id)) return rows;
-  return [placeholder, ...rows];
+function filterOutCurrentPlaceholder(rows: PromptProjectOption[]): PromptProjectOption[] {
+  return rows.filter((r) => r.id !== '{{currentPromptProjectId}}');
 }
 
 interface PromptCatalogContextValue {
@@ -168,9 +163,9 @@ export function PromptCatalogProvider({ children }: { children: React.ReactNode 
   const remoteEnabled = isPromptManagementApiEnabled();
   const [extraVersions, setExtraVersions] = useState<Record<string, VersionOption[]>>({});
   const [contentOverrides, setContentOverrides] = useState<Record<string, PromptVersionContent>>({});
-  const [projectOptions, setProjectOptions] = useState<PromptProjectOption[]>(() => [
-    ...SAMPLE_PROMPT_PROJECTS,
-  ]);
+  const [projectOptions, setProjectOptions] = useState<PromptProjectOption[]>(() =>
+    SAMPLE_PROMPT_PROJECTS.filter((p) => p.id !== '{{currentPromptProjectId}}'),
+  );
   const [projectsLoading, setProjectsLoading] = useState(false);
 
   useEffect(() => {
@@ -181,7 +176,7 @@ export function PromptCatalogProvider({ children }: { children: React.ReactNode 
       .then((rows) => {
         if (cancelled || rows.length === 0) return;
         const mapped = rows.map((r) => ({ id: r.id, name: r.name }));
-        setProjectOptions(ensureCurrentProjectRow(mapped));
+        setProjectOptions(filterOutCurrentPlaceholder(mapped));
       })
       .catch(() => {
         if (!cancelled) {
@@ -213,6 +208,8 @@ export function PromptCatalogProvider({ children }: { children: React.ReactNode 
 
     for (const v of extraVersions[raw] || []) merged.set(v.id, v);
     for (const v of extraVersions[resolved] || []) merged.set(v.id, v);
+
+    merged.delete('{{currentPromptVersionId}}');
 
     if (merged.size === 0) {
       const fallbackId = `${resolved}-default`;

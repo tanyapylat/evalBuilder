@@ -128,6 +128,13 @@ export function configToYaml(config: EvalConfig): string {
         if (assertion.threshold !== undefined) {
           lines.push(`      threshold: ${assertion.threshold}`);
         }
+        if (assertion.provider) {
+          lines.push('      provider:');
+          lines.push(`        id: ${yamlScalar(String(assertion.provider.id))}`);
+          lines.push('        config:');
+          lines.push(`          max_tokens: ${assertion.provider.config.max_tokens}`);
+          lines.push(`          temperature: ${assertion.provider.config.temperature}`);
+        }
       }
     }
   }
@@ -285,6 +292,7 @@ function parseAssertionBlock(raw: unknown, index: number): Assertion {
     metric: o.metric !== undefined ? String(o.metric) : undefined,
     value: (o.value !== undefined ? o.value : '') as Assertion['value'],
     threshold: typeof o.threshold === 'number' ? o.threshold : undefined,
+    provider: parseJudgeProvider(o.provider),
   };
 }
 

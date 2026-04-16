@@ -102,11 +102,12 @@ export function buildPromptfooConfig(config: EvalConfig) {
             },
           }
         : {}),
-      assert: config.defaultTest.assert.map(({ type, metric, value, threshold }) => ({
+      assert: config.defaultTest.assert.map(({ type, metric, value, threshold, provider }) => ({
         type,
         ...(metric ? { metric } : {}),
         ...(value !== undefined && value !== '' ? { value } : {}),
         ...(threshold !== undefined ? { threshold } : {}),
+        ...(provider ? { provider: { id: provider.id, config: provider.config } } : {}),
       })),
     },
 
@@ -116,10 +117,12 @@ export function buildPromptfooConfig(config: EvalConfig) {
           vars: t.vars,
           ...(t.assert && t.assert.length > 0
             ? {
-                assert: t.assert.map(({ type, metric, value }) => ({
+                assert: t.assert.map(({ type, metric, value, threshold, provider }) => ({
                   type,
                   ...(metric ? { metric } : {}),
                   ...(value !== undefined && value !== '' ? { value } : {}),
+                  ...(threshold !== undefined ? { threshold } : {}),
+                  ...(provider ? { provider: { id: provider.id, config: provider.config } } : {}),
                 })),
               }
             : {}),

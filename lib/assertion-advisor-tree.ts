@@ -1,5 +1,5 @@
 export interface AdvisorResult {
-  recommendation: 'deterministic' | 'llm_judge';
+  recommendation: 'deterministic' | 'llm_judge' | 'code';
   confidence: 'high' | 'medium';
   reason: string;
   examples: string[];
@@ -25,199 +25,214 @@ export function isResultNode(node: TreeNode): node is ResultNode {
 }
 
 const TREE_NODES: Record<string, TreeNode> = {
+  // ── Questions ──────────────────────────────────────────────────────────────
+
   q1: {
     id: 'q1',
-    question: 'Is there a single clearly correct answer, format, or structure?',
-    description: 'Examples: exact wording, JSON schema, required fields, regex match',
-    answers: [
-      { label: 'Yes', nextId: 'q2a' },
-      { label: 'No', nextId: 'q2b' },
-    ],
-  },
-  q2a: {
-    id: 'q2a',
-    question: 'Can this be verified with code or rules, without human-like interpretation?',
+    question: 'Can the output be evaluated with exact rules — no interpretation needed?',
     description:
-      'Examples: exact match, contains / does not contain, field presence, schema validation, numeric range',
+      'Think: keyword checks, regex, JSON structure, numeric thresholds, field presence — anything a script can verify without "reading" the text.',
     answers: [
-      { label: 'Yes', nextId: 'result_det_a' },
-      { label: 'No', nextId: 'q3' },
-    ],
-  },
-  q2b: {
-    id: 'q2b',
-    question: 'Are multiple different answers likely to be acceptable as long as they are good?',
-    description:
-      'Examples: paraphrases, open-ended summaries, alternative valid phrasings',
-    answers: [
-      { label: 'Yes', nextId: 'q3' },
-      { label: 'No', nextId: 'q4' },
-    ],
-  },
-  q3: {
-    id: 'q3',
-    question:
-      'Does this check require judging meaning, quality, tone, relevance, or completeness?',
-    description:
-      'Examples: helpfulness, politeness, correctness of explanation, whether response addressed the user\u2019s intent',
-    answers: [
-      { label: 'Yes', nextId: 'result_llm_a' },
-      { label: 'No', nextId: 'q4' },
-    ],
-  },
-  q4: {
-    id: 'q4',
-    question: 'Are you mainly checking strict constraints or compliance rules?',
-    description:
-      'Examples: must include disclaimer, must not mention a forbidden phrase, must follow exact format, must return valid JSON',
-    answers: [
-      { label: 'Yes', nextId: 'result_det_b' },
-      { label: 'No', nextId: 'q5' },
-    ],
-  },
-  q5: {
-    id: 'q5',
-    question:
-      'Would a human need to read the output and make a judgment call to decide whether it passes?',
-    description: 'Think about whether a simple script could evaluate this, or it requires reading comprehension',
-    answers: [
-      { label: 'Yes', nextId: 'result_llm_b' },
-      { label: 'No', nextId: 'q6' },
-    ],
-  },
-  q6: {
-    id: 'q6',
-    question: 'Is the main concern semantic quality rather than structural correctness?',
-    description:
-      'Semantic quality = meaning, usefulness, appropriateness. Structural = format, schema, presence of fields',
-    answers: [
-      { label: 'Yes', nextId: 'result_llm_c' },
-      { label: 'No', nextId: 'result_det_d' },
+      { label: 'Yes, exact rules work', nextId: 'q2' },
+      { label: 'No, it needs interpretation', nextId: 'q3' },
     ],
   },
 
-  // ── Terminal: Deterministic ───────────────────────────────────────────────
+  q2: {
+    id: 'q2',
+    question: 'Do the rules require multi-step logic, data parsing, or computation?',
+    description:
+      'Examples: validate specific JSON fields, combine several conditions, check math in the response, parse a table, or call a helper function.',
+    answers: [
+      { label: 'Yes, I need custom logic', nextId: 'result_code_a' },
+      { label: 'No, a simple check is enough', nextId: 'result_det_a' },
+    ],
+  },
+
+  q3: {
+    id: 'q3',
+    question: 'Does a human need to judge meaning, quality, tone, or relevance?',
+    description:
+      'Examples: Is the response helpful? Is the tone professional? Did it address the question correctly?',
+    answers: [
+      { label: 'Yes', nextId: 'q4' },
+      { label: 'No', nextId: 'q5' },
+    ],
+  },
+
+  q4: {
+    id: 'q4',
+    question: 'Could you write a rubric describing what makes a good vs. bad response?',
+    description:
+      'A rubric like "PASS if polite, accurate, and addresses the question" works well for LLM judges. If you\'d rather write code to score specific criteria, choose the second option.',
+    answers: [
+      { label: 'Yes, a rubric works', nextId: 'result_llm_a' },
+      { label: 'I\'d rather write code to score it', nextId: 'result_code_b' },
+    ],
+  },
+
+  q5: {
+    id: 'q5',
+    question: 'Are you checking structural constraints or compliance rules?',
+    description:
+      'Examples: must include a disclaimer, must not mention a competitor, must return valid JSON, must follow a specific format.',
+    answers: [
+      { label: 'Yes', nextId: 'q6' },
+      { label: 'No, it\'s more about overall quality', nextId: 'result_llm_b' },
+    ],
+  },
+
+  q6: {
+    id: 'q6',
+    question: 'Are the rules complex enough to need a script?',
+    description:
+      'Choose "Yes" if you need to combine multiple conditions, parse nested data, or do calculations. Choose "No" if a single contains / regex / JSON check covers it.',
+    answers: [
+      { label: 'Yes, a script is needed', nextId: 'result_code_c' },
+      { label: 'No, built-in checks cover it', nextId: 'result_det_b' },
+    ],
+  },
+
+  // ── Terminal: Deterministic ────────────────────────────────────────────────
+
   result_det_a: {
     id: 'result_det_a',
     result: {
       recommendation: 'deterministic',
       confidence: 'high',
       reason:
-        'The expected output can be verified with explicit rules or code without interpretation.',
+        'Your check can be handled by a simple built-in rule — no custom code or LLM judgment required.',
       examples: [
-        'equals',
-        'contains',
-        'not-contains',
+        'equals / icontains',
+        'contains / not-contains',
         'regex',
-        'is-json',
-        'javascript custom assertion',
+        'is-json / contains-json',
+        'cost / latency thresholds',
       ],
-      suggestedNextStep: 'Start with strict rule-based assertions.',
+      suggestedNextStep:
+        'Add a Deterministic assertion and pick the matching check type from the dropdown.',
     },
   },
+
   result_det_b: {
     id: 'result_det_b',
     result: {
       recommendation: 'deterministic',
       confidence: 'high',
       reason:
-        'You are checking strict constraints, required structure, or compliance rules.',
+        'Your structural or compliance rules can be handled with built-in assertion types.',
       examples: [
         'contains required disclaimer',
-        'does not contain banned phrase',
-        'matches schema',
-        'regex validation',
-        'custom JavaScript check',
+        'not-contains banned phrase',
+        'regex for format validation',
+        'is-json for valid JSON',
+        'similar for fuzzy match',
       ],
-      suggestedNextStep: 'Start with strict rule-based assertions.',
+      suggestedNextStep:
+        'Add a Deterministic assertion. Use "contains" for required phrases, "regex" for patterns, or "is-json" for structure.',
     },
   },
-  result_det_c: {
-    id: 'result_det_c',
+
+  // ── Terminal: Custom Code ──────────────────────────────────────────────────
+
+  result_code_a: {
+    id: 'result_code_a',
     result: {
-      recommendation: 'deterministic',
-      confidence: 'medium',
+      recommendation: 'code',
+      confidence: 'high',
       reason:
-        'This appears rule-based and does not require subjective interpretation.',
+        'Your validation needs multi-step logic, data parsing, or computation that goes beyond simple pattern matching.',
       examples: [
-        'field presence',
-        'exact value checks',
-        'format validation',
-        'range checks',
+        'Parse JSON and check specific field values',
+        'Validate that a number in the response is within range',
+        'Combine multiple conditions (length + keywords + format)',
+        'Check that a list in the output is sorted or deduplicated',
+        'Call a helper function or external API',
       ],
-      suggestedNextStep: 'Start with strict rule-based assertions.',
+      suggestedNextStep:
+        'Add a Custom Code assertion. Choose JavaScript for quick inline checks, or Python if you prefer its libraries.',
     },
   },
-  result_det_d: {
-    id: 'result_det_d',
+
+  result_code_b: {
+    id: 'result_code_b',
     result: {
-      recommendation: 'deterministic',
+      recommendation: 'code',
       confidence: 'medium',
       reason:
-        'The primary need is structural or logic-based validation.',
+        'You want to programmatically score or evaluate criteria that are hard to express as a simple rubric.',
       examples: [
-        'JSON schema',
-        'regex',
-        'contains / not contains',
-        'custom JS assertion',
+        'Score based on multiple weighted criteria',
+        'Check readability metrics (sentence length, vocabulary)',
+        'Validate code output by parsing / running it',
+        'Compare structured data field-by-field',
+        'Custom scoring with a numeric threshold',
       ],
-      suggestedNextStep: 'Start with strict rule-based assertions.',
+      suggestedNextStep:
+        'Add a Custom Code assertion. Your function receives the LLM output and can return true/false, a numeric score, or a { pass, score, reason } object.',
+    },
+  },
+
+  result_code_c: {
+    id: 'result_code_c',
+    result: {
+      recommendation: 'code',
+      confidence: 'high',
+      reason:
+        'Your compliance rules involve enough complexity (multiple conditions, nested data, calculations) that a script is the cleanest approach.',
+      examples: [
+        'Ensure JSON has required fields with correct types',
+        'Validate that response follows a multi-part template',
+        'Check multiple forbidden patterns in one pass',
+        'Verify calculations or numeric constraints',
+        'Parse and validate structured output (CSV, XML, tables)',
+      ],
+      suggestedNextStep:
+        'Add a Custom Code assertion. JavaScript runs inline; Python can leverage libraries like json, re, or csv.',
     },
   },
 
   // ── Terminal: LLM Judge ────────────────────────────────────────────────────
+
   result_llm_a: {
     id: 'result_llm_a',
     result: {
       recommendation: 'llm_judge',
       confidence: 'high',
       reason:
-        'The assertion depends on semantic understanding, judgment, or subjective quality.',
+        'Your evaluation requires semantic understanding — a rubric-based LLM judge is the best fit.',
       examples: [
-        'Does the answer address the user intent?',
-        'Is the explanation correct and helpful?',
-        'Is the tone empathetic and professional?',
-        'Does the response miss any important information?',
+        'llm-rubric — custom rubric you define',
+        'model-graded-closedqa — factual Q&A grading',
+        'model-graded-factuality — fact checking',
+        'answer-relevance — is the answer on-topic?',
       ],
-      suggestedNextStep: 'Start with a rubric-based semantic evaluation.',
+      suggestedNextStep:
+        'Add an LLM as Judge assertion and write a clear rubric describing pass/fail criteria.',
     },
   },
+
   result_llm_b: {
     id: 'result_llm_b',
     result: {
       recommendation: 'llm_judge',
-      confidence: 'high',
-      reason:
-        'A human would need to read the output and make a judgment call.',
-      examples: [
-        'relevance',
-        'helpfulness',
-        'completeness',
-        'clarity',
-        'tone',
-      ],
-      suggestedNextStep: 'Start with a rubric-based semantic evaluation.',
-    },
-  },
-  result_llm_c: {
-    id: 'result_llm_c',
-    result: {
-      recommendation: 'llm_judge',
       confidence: 'medium',
       reason:
-        'The main evaluation depends on semantic quality rather than strict rules.',
+        'The check is about overall quality rather than specific rules — an LLM judge can assess this holistically.',
       examples: [
-        'semantic correctness',
+        'helpfulness',
+        'clarity and coherence',
+        'completeness',
+        'tone and professionalism',
         'instruction-following quality',
-        'response usefulness',
-        'appropriateness of tone',
       ],
-      suggestedNextStep: 'Start with a rubric-based semantic evaluation.',
+      suggestedNextStep:
+        'Add an LLM as Judge assertion with a rubric focused on the quality dimensions you care about.',
     },
   },
 };
 
-export const QUESTION_IDS = ['q1', 'q2a', 'q2b', 'q3', 'q4', 'q5', 'q6'];
+export const QUESTION_IDS = ['q1', 'q2', 'q3', 'q4', 'q5', 'q6'];
 
 export function getNode(id: string): TreeNode {
   const node = TREE_NODES[id];
