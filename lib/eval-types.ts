@@ -65,6 +65,38 @@ export interface TestCase {
   assert?: Assertion[];
 }
 
+export const REQUIREMENT_CATEGORIES = [
+  'structure',
+  'constraint',
+  'tone',
+  'correctness',
+  'format',
+  'safety',
+  'content',
+  'behavior',
+] as const;
+
+export type RequirementCategory = (typeof REQUIREMENT_CATEGORIES)[number];
+
+export const REQUIREMENT_PRIORITIES = ['critical', 'important', 'optional'] as const;
+export type RequirementPriority = (typeof REQUIREMENT_PRIORITIES)[number];
+
+export const REQUIREMENT_STRATEGIES = ['deterministic', 'code', 'llm-judge', 'none-yet'] as const;
+export type RequirementAssertionStrategy = (typeof REQUIREMENT_STRATEGIES)[number];
+
+export interface Requirement {
+  id: string;
+  text: string;
+  category: RequirementCategory;
+  priority: RequirementPriority;
+  assertionStrategy: RequirementAssertionStrategy;
+  /** Specific assertion type recommended for this requirement (user-editable). */
+  recommendedAssertionType?: AssertionType;
+  /** Whether this requirement is included for assertion generation. */
+  included: boolean;
+  source: 'extracted' | 'manual';
+}
+
 export interface ProviderConfig {
   id: string;
   config: {

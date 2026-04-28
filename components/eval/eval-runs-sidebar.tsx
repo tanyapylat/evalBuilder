@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ChevronRight, ChevronLeft, Check, X, Clock, Loader2, ExternalLink } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { ChevronRight, ChevronLeft, Check, X, Clock, Loader2, ExternalLink, BarChart3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useEval } from '@/lib/eval-store';
 import { cn } from '@/lib/utils';
@@ -83,6 +84,7 @@ interface EvalRunsSidebarProps {
 
 export function EvalRunsSidebar({ collapsed, onToggle }: EvalRunsSidebarProps) {
   const { evalRuns } = useEval();
+  const router = useRouter();
 
   if (collapsed) {
     return (
@@ -144,8 +146,20 @@ export function EvalRunsSidebar({ collapsed, onToggle }: EvalRunsSidebarProps) {
                 ? `${run.promptfooBaseUrl}/eval/${run.evalId}`
                 : null;
 
+            const resultsLink =
+              status === 'Complete' && run.evalId
+                ? `/results/${encodeURIComponent(run.evalId)}`
+                : null;
+
             return (
-              <div key={run.id} className="border-b border-border/50 px-4 py-3 last:border-b-0">
+              <div
+                key={run.id}
+                className={cn(
+                  'border-b border-border/50 px-4 py-3 last:border-b-0',
+                  resultsLink && 'cursor-pointer transition-colors hover:bg-accent/50',
+                )}
+                onClick={() => resultsLink && router.push(resultsLink)}
+              >
                 <div className="flex items-start gap-2.5">
                   {/* Status circle */}
                   <div className="mt-0.5 shrink-0">
@@ -176,27 +190,46 @@ export function EvalRunsSidebar({ collapsed, onToggle }: EvalRunsSidebarProps) {
                       )}
                     </div>
 
-                    {/* Date */}
+                    {/* Date + action icons */}
                     <div className="mt-0.5 flex items-center justify-between gap-2">
                       <span className="text-xs text-muted-foreground">
                         <FormattedDate dateString={run.runAt} />
                       </span>
-                      {promptfooLink && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <a
-                              href={promptfooLink}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="shrink-0 text-muted-foreground hover:text-foreground"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <ExternalLink className="h-3 w-3" />
-                            </a>
-                          </TooltipTrigger>
-                          <TooltipContent side="left">View in Promptfoo</TooltipContent>
-                        </Tooltip>
-                      )}
+                      <div className="flex items-center gap-1.5">
+                        {resultsLink && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                type="button"
+                                className="shrink-0 text-primary hover:text-primary/80"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  router.push(resultsLink);
+                                }}
+                              >
+                                <BarChart3 className="h-3.5 w-3.5" />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent side="left">View Results</TooltipContent>
+                          </Tooltip>
+                        )}
+                        {promptfooLink && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <a
+                                href={promptfooLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="shrink-0 text-muted-foreground hover:text-foreground"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <ExternalLink className="h-3 w-3" />
+                              </a>
+                            </TooltipTrigger>
+                            <TooltipContent side="left">View in Promptfoo</TooltipContent>
+                          </Tooltip>
+                        )}
+                      </div>
                     </div>
 
                     {/* User */}

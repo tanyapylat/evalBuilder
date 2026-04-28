@@ -205,20 +205,41 @@ The app is a guided eval builder with YAML transparency. Users can:
 * Default judge model: `openai:gpt-4.1-2025-04-14`.
 * **Metric name**: Optional text input.
 
-### 5.9 AI-Assisted Assertion Generation
+### 5.9 AI-Assisted Assertion Generation (Requirement-Driven Flow)
 
+* **Multi-step generation flow** (Prompt → Requirements → Review → Assertions):
+  1. **Extract**: System analyzes the selected prompt and derives candidate requirements via `/api/extract-requirements`.
+  2. **Review**: User reviews, edits, adds, or removes requirements before confirming.
+  3. **Generate**: Assertions are generated from the confirmed requirement set via `/api/generate-assertions`.
 * **Generate Assertions** button with three modes:
   * Generate (initial, when no assertions exist)
   * Generate More (append to existing)
   * Regenerate (replace all existing)
+* **Requirement review step**:
+  * Each requirement has an **include/exclude checkbox** — only included requirements produce assertions.
+  * Each requirement shows **priority** (critical/important/optional), **category**, and **assertion strategy** (deterministic/code/llm-judge/none-yet) — all editable via inline dropdowns.
+  * Each requirement has a **recommended assertion type** selector (e.g., `contains`, `regex`, `is-json`, `llm-rubric`) — editable by the user. Available types are filtered by the selected strategy.
+  * **Include all / Exclude all** buttons for bulk toggling.
+  * Users can **add requirements manually** with category, priority, strategy, and assertion type pre-populated.
+  * Users can **edit requirement text** inline and **delete** individual requirements.
+  * **Re-extraction confirmation**: If the user has modified requirements (edited text, changed settings, added/removed), re-extracting shows a confirmation dialog to prevent accidental loss of edits.
+* **Post-generation action choice**: When existing assertions are present, the user can choose to **Replace all** or **Append new assertions** via a dropdown before confirming generation.
 * **Generation dialog**:
-  * Optional instructions textarea
-  * Sends prompt content (from live drafts or loaded catalog content), existing assertions, and test case summary to `/api/generate-assertions`
+  * Optional instructions textarea for extra generation guidance.
+  * Sends prompt content (from live drafts or loaded catalog content), included requirements with `recommendedAssertionType`, existing assertions, and test case summary to `/api/generate-assertions`.
+* **Server-side** (`/api/extract-requirements`):
+  * Uses OpenAI chat completions with `response_format: json_object`
+  * Extracts 3–10 consolidated, non-overlapping, atomic requirements from prompt content
+  * Each requirement includes: text, category, priority, assertionStrategy, and `recommendedAssertionType`
+  * `recommendedAssertionType` maps to specific Promptfoo assertion types (e.g., `contains`, `is-json`, `llm-rubric`)
+  * Falls back to strategy-based defaults when the model doesn't recommend a specific type
+  * Requires `OPENAI_API_KEY` environment variable
 * **Server-side** (`/api/generate-assertions`):
   * Uses OpenAI chat completions with `response_format: json_object`
-  * System prompt includes full assertion type catalog (descriptions, when-to-use, examples)
+  * System prompt includes full assertion type catalog and LLM-as-judge / deterministic quality guidelines
+  * Accepts `recommendedAssertionType` per requirement and instructs the model to use it as a starting point
   * Normalizes returned types (coerces invalid types like `javascript`/`python` to `llm-rubric`)
-  * Returns 3–5 assertion suggestions
+  * Returns up to 7 assertion suggestions (scaled to actionable requirement count)
   * Requires `OPENAI_API_KEY` environment variable
 
 ### 5.10 Dataset / Tests Section
@@ -328,26 +349,37 @@ The app is a guided eval builder with YAML transparency. Users can:
 * Forwards Bearer token.
 * Returns upstream status (status ID, successes, total test cases, eval ID, promptfoo base URL, error message).
 
-### 6.3 Generate Assertions (`POST /api/generate-assertions`)
+### 6.3 Extract Requirements (`POST /api/extract-requirements`)
 
-* Input validated with Zod: prompts with `PromptVersionContent`, existing assertions, optional test summary, instructions, vendor/model/temperature.
-* Uses OpenAI `response_format: json_object` to generate 3–5 assertion suggestions.
-* System prompt includes the full assertion type reference (all types, descriptions, examples).
-* Normalizes returned types and strips markdown fences from responses.
+* Input validated with Zod: prompts with `PromptVersionContent`, optional vendor/model/temperature.
+* Uses OpenAI `response_format: json_object` to extract 3–10 consolidated requirements from prompt content.
+* Each requirement includes: `text`, `category`, `priority`, `assertionStrategy`, and `recommendedAssertionType`.
+* `recommendedAssertionType` maps to specific Promptfoo assertion types based on the requirement's nature.
+* Falls back to strategy-based defaults (`contains` for deterministic, `javascript` for code, `llm-rubric` for llm-judge) when the model doesn't recommend a specific type.
+* Normalizes returned categories, priorities, and strategies; strips markdown fences.
 
-### 6.4 Generate Test Cases (`POST /api/generate-tests`)
+### 6.4 Generate Assertions (`POST /api/generate-assertions`)
+
+* Input validated with Zod: prompts with `PromptVersionContent`, existing assertions, optional requirements (with `recommendedAssertionType`), optional test summary, instructions, vendor/model/temperature.
+* Uses OpenAI `response_format: json_object` to generate assertion suggestions.
+* Requirement-driven mode: system prompt respects requirement priorities, strategies, and recommended assertion types; targets 2–4 deterministic + 1–3 LLM judge, capped at 7.
+* Legacy mode (no requirements): generates 3–5 general assertion suggestions.
+* System prompt includes assertion type catalog and quality guidelines for both deterministic and LLM-as-judge assertions.
+* Normalizes returned types (coerces invalid types like `javascript`/`python` to `llm-rubric`); strips markdown fences.
+
+### 6.5 Generate Test Cases (`POST /api/generate-tests`)
 
 * Input validated with Zod: prompts, assertions, variables, count (1–10), examples, vendor/model/temperature/maxTokens.
 * Uses OpenAI to generate structured test cases matching prompt variables.
 * Returns `{ testCases }` sliced to requested count.
 
-### 6.5 Prompt Management Proxy (`GET|POST /api/prompt-management/[...segments]`)
+### 6.6 Prompt Management Proxy (`GET|POST /api/prompt-management/[...segments]`)
 
 * Forwards requests to `${PROMPT_MANAGEMENT_API_BASE_URL}/api/v3/{segments}`.
 * Passes query strings, content-type, POST body, and Bearer token.
 * Enables browser-side prompt catalog operations without CORS issues.
 
-### 6.6 Mock Prompt Management API (`mock-pm-api/server.js`)
+### 6.7 Mock Prompt Management API (`mock-pm-api/server.js`)
 
 * Standalone Node.js HTTP server on port 3001.
 * Endpoints:
@@ -374,12 +406,19 @@ The app is a guided eval builder with YAML transparency. Users can:
 * **`SavedConfig`**: `id`, `name`, `config: EvalConfig`, `createdAt`, `updatedAt`
 * **`EvalRun`**: `id`, `name`, `status`, `passRate?`, `passed?`, `total?`, `date`, `runBy?`, `evalId?`, `promptfooBaseUrl?`, `errorMessage?`
 
-### 7.2 Prompt Studio Types
+### 7.2 Requirement Types (Assertion Generation Flow)
+
+* **`Requirement`**: `id`, `text`, `category: RequirementCategory`, `priority: RequirementPriority`, `assertionStrategy: RequirementAssertionStrategy`, `recommendedAssertionType?: AssertionType`, `included: boolean`, `source: 'extracted' | 'manual'`
+* **`RequirementCategory`**: `'structure' | 'constraint' | 'tone' | 'correctness' | 'format' | 'safety' | 'content' | 'behavior'`
+* **`RequirementPriority`**: `'critical' | 'important' | 'optional'`
+* **`RequirementAssertionStrategy`**: `'deterministic' | 'code' | 'llm-judge' | 'none-yet'`
+
+### 7.3 Prompt Studio Types
 
 * **`PromptVersionContent`**: `messages: PromptMessage[]`, `variables`, `vendor?`, `model?`, `params?`
 * **`PromptMessage`**: `role` (system | user | assistant), `content: string`
 
-### 7.3 Assertion Type Catalog
+### 7.4 Assertion Type Catalog
 
 * 25+ assertion types organized into categories:
   * **Equality**: equals, is-json, is-valid-openai-function-call, is-valid-openai-tools-call
@@ -392,7 +431,7 @@ The app is a guided eval builder with YAML transparency. Users can:
   * **LLM**: llm-rubric
 * Each type has metadata: description, whenToUse, example value.
 
-### 7.4 Vendor / Model Catalog
+### 7.5 Vendor / Model Catalog
 
 * **Vendors**: OpenAI, Anthropic, Google, Meta, Mistral, DeepSeek, xAI
 * **Models per vendor** (examples): GPT-4.1, GPT-4.1 mini, GPT-4o, Claude Sonnet 4, Claude Haiku 3.5, Gemini 2.5 Pro/Flash, Llama 4 Scout/Maverick, Mistral Large, DeepSeek Chat/Reasoner, Grok 3/mini

@@ -25,6 +25,14 @@ const promptContentSchema = z.object({
   }),
 });
 
+const requirementSchema = z.object({
+  text: z.string(),
+  category: z.string(),
+  priority: z.string().optional(),
+  assertionStrategy: z.string().optional(),
+  recommendedAssertionType: z.string().optional(),
+});
+
 const bodySchema = z.object({
   prompts: z.array(
     z.object({
@@ -39,6 +47,7 @@ const bodySchema = z.object({
       value: z.union([z.string(), z.array(z.string()), z.number()]),
     }),
   ),
+  requirements: z.array(requirementSchema).optional(),
   testsSummary: z.string().optional(),
   instructions: z.string().optional(),
   vendor: z.string().optional(),
@@ -108,6 +117,148 @@ function stripJsonFence(s: string): string {
   return m ? m[1]!.trim() : t;
 }
 
+function buildRequirementDrivenPrompt(
+  allTypesList: string,
+  deterministicList: string,
+  llmList: string,
+): string {
+  return `You are generating evaluation assertions for Promptfoo based on user-confirmed requirements.
+
+The user has reviewed and confirmed a prioritized set of requirements. Each requirement includes a priority (critical, important, or optional) and a recommended assertion strategy (deterministic, code, llm-judge, or none-yet).
+
+Your job is to produce a compact, high-signal assertion set. Think in terms of coverage of critical behaviors, not exhaustive literal coverage.
+
+## Core principles
+
+1. COMPACT SET: Target 2–4 deterministic assertions for hard rules + 1–3 LLM judge assertions for nuanced quality. Rarely exceed 7 total. More assertions does not mean better coverage.
+2. RESPECT PRIORITIES: Critical requirements MUST be covered. Important requirements SHOULD be covered. Optional requirements should only be covered if they naturally merge with a critical/important assertion.
+3. RESPECT RECOMMENDED STRATEGY AND TYPE: Each requirement has a recommended assertion strategy and may have a specific recommendedAssertionType (e.g. "contains", "regex", "llm-rubric"). Use the recommended type as your starting point. Deviate only when the recommended type is clearly not feasible for that requirement.
+4. MERGE WHEN POSSIBLE: If two requirements test closely related concerns, a single well-crafted assertion can cover both. State which requirements it covers in the explanation.
+5. ONE CONCERN PER ASSERTION: Each assertion validates exactly one coherent concern. Never combine unrelated checks into a compound assertion. Related sub-checks (e.g. "no legal advice" and "no medical advice" → one not-contains-any) are fine because they test the same concern.
+6. DETERMINISTIC FIRST: Deterministic checks are your first line of defense. If something can be verified with code, do NOT use an LLM judge. Only fall back to llm-rubric when deterministic validation is genuinely not feasible.
+7. NO DUPLICATES: Check existing assertions and do not regenerate anything that already exists.
+8. SKIP "none-yet": Requirements with assertionStrategy "none-yet" should NOT produce assertions unless the user explicitly included them.
+
+## Deterministic assertion quality
+
+A strong deterministic assertion is: precise (checks something exact), fast (no model call), reliable (same input → same result), debuggable (failure reason is obvious).
+
+Rules:
+- Use for: required fields present, JSON validity, exact values, keyword presence/absence, regex patterns, word count, length constraints.
+- PREFER STRUCTURE OVER TEXT MATCHING: Use is-json or contains-json to validate structure. Parse and check fields explicitly rather than doing fragile substring matches in long text.
+- Each assertion checks ONE thing. Bad: "response contains keyword AND is short AND formatted correctly." Good: one assertion per condition.
+- FAIL LOUDLY: The assertion definition itself should make it obvious what failed and where. If you need to "interpret" a failure, the assertion is too vague.
+- Be strict on structure, flexible on wording. Too strict = brittle tests and false negatives. Too loose = useless tests.
+
+## LLM-as-judge assertion quality
+
+A strong LLM judge is: narrow (evaluates one thing only), binary (pass or fail, not vague scoring), explicit (clear rules for success and failure), explainable (always gives a short reason).
+
+Rules:
+- ONE CRITERION PER JUDGE. Each judge answers a single question (e.g. "Did the model follow the instruction?", "Is the output factually correct?", "Is the format valid?"). Never combine multiple concerns into one judge.
+- USE PASS / FAIL, NOT SCORES. Avoid 1-to-5 or 1-to-10 scales. Binary verdicts make results easier to interpret, easier to debug, and more consistent across runs.
+- DEFINE A CLEAR RUBRIC. The judge must know exactly what "good" and "bad" mean. Include explicit Pass criteria and Fail criteria. Be concrete, not abstract. Bad: "The answer should be good and relevant." Good: "The answer must include all requested fields and not introduce unrelated content."
+- REQUIRE A SHORT CRITIQUE. Always ask the judge to explain what failed and why. This is critical for debugging, improving prompts, and refining assertions later.
+- KEEP IT FOCUSED. Tell the judge what NOT to evaluate. Example: "Do not evaluate tone or formatting unless it directly affects the criterion." This reduces noise and inconsistency.
+- USE STRUCTURED OUTPUT. Force a predictable JSON format:
+  {"verdict": "PASS" | "FAIL", "critique": "short explanation"}
+- Rubric template for "value" field:
+  "Evaluate whether the response [specific criterion]. PASS if [concrete, observable pass condition]. FAIL if [concrete, observable fail condition]. Do not evaluate [out-of-scope aspects]. Respond with JSON: {\"verdict\": \"PASS\" or \"FAIL\", \"critique\": \"one sentence explaining your judgment\"}."
+
+## Decision filter
+
+Before creating each assertion, ask:
+1. Is this materially important? (Would failure matter in real usage?)
+2. Is it distinct from other assertions? (Not overlapping?)
+3. Can it be tested in a clear, unambiguous way? (Not vague?)
+If any answer is no, skip it.
+
+## Output rules
+- Produce assertions in "suggestions" array. If requirements are empty or unusable, return {"suggestions":[]}.
+- Never use assertion types "javascript" or "python".
+- Do not output YAML, Promptfoo config, or executable code.
+
+Return ONLY valid JSON (no markdown fences) with this exact shape:
+{"suggestions":[{"type":"deterministic"|"llm","assertionType":"<type>","metric":"<short label>","value":"<string>","explanation":"<brief why — mention which requirement(s) this covers>"}]}
+
+Field rules:
+- "type": "deterministic" for objective checks; "llm" for rubric/judge-style checks.
+- assertionType MUST be one of: ${allTypesList}
+  (Deterministic: ${deterministicList}; LLM judges: ${llmList}.)
+- For deterministic types, "value" is the literal, pattern, or structured check the evaluator needs.
+- For llm-rubric, "value" MUST be a complete rubric following the template above (criterion, pass condition, fail condition, exclusions, JSON output instruction).
+- "metric" is a concise label for results tables.
+- "explanation" is one short sentence on which requirement(s) this assertion covers.`;
+}
+
+function buildLegacyPrompt(
+  allTypesList: string,
+  deterministicList: string,
+  llmList: string,
+): string {
+  return `You are generating evaluation assertions for the provided prompt(s).
+
+Analyze the prompt exactly as given in the user message. Do not rewrite, summarize, or improve the prompt text.
+
+Your goal is a short, high-value set of assertions for Promptfoo to evaluate outputs from this prompt.
+
+Focus on:
+1. The prompt's core instructions and constraints
+2. The most important output quality expectations
+3. The most likely failure modes or edge cases
+4. Criteria that are practical and useful for evaluation
+
+Generation rules:
+- Produce only 3 to 5 assertions in "suggestions" (never more than 5). If the prompt content is missing or unusable, return {"suggestions":[]}.
+- Each assertion checks exactly ONE thing. Never combine multiple conditions into a compound assertion.
+- Include only the most important assertions; avoid overlap, duplication, and low-value checks.
+- Prefer assertions directly useful in real evaluation workflows.
+
+## Deterministic assertions — your first line of defense
+
+Use deterministic checks whenever something can be verified with code. Do NOT use an LLM judge for things a simple check can handle.
+
+Good candidates: required fields present, JSON validity, exact values, keyword presence/absence, length constraints, regex patterns, word count.
+
+Quality rules:
+- PREFER STRUCTURE OVER TEXT MATCHING. Use is-json or contains-json to validate structure. Parse and check fields explicitly rather than fragile substring matches in long text.
+- Each assertion checks one thing only. Bad: "response contains keyword AND is short AND formatted correctly." Good: one assertion per condition.
+- FAIL LOUDLY. The assertion itself should make it obvious what failed. If you'd need to "interpret" the failure, it's too vague.
+- Be strict on structure, flexible on wording. Too strict = brittle tests and false negatives. Too loose = useless tests.
+- Do not force deterministic assertions if the prompt does not support them.
+
+## LLM-as-judge assertions — for meaning and quality
+
+Use llm-rubric only when the check genuinely requires semantic understanding (tone, clarity, helpfulness, completeness, instruction-following, safety).
+
+Quality rules:
+- ONE CRITERION PER JUDGE. Each judge answers a single question (e.g. "Did the model follow the instruction?", "Is the output factually correct?"). Never combine multiple concerns.
+- USE PASS / FAIL, NOT SCORES. Avoid 1-to-5 or 1-to-10 scales. Binary verdicts are easier to interpret, debug, and more consistent across runs.
+- DEFINE A CLEAR RUBRIC. Include explicit pass criteria and fail criteria. Be concrete, not abstract. Bad: "The answer should be good and relevant." Good: "The answer must include all requested fields and not introduce unrelated content."
+- REQUIRE A SHORT CRITIQUE. Always require the judge to explain what failed and why — critical for debugging.
+- KEEP IT FOCUSED. Tell the judge what NOT to evaluate. Example: "Do not evaluate tone or formatting unless it directly affects the criterion." This reduces noise and inconsistency.
+- USE STRUCTURED OUTPUT. The rubric must instruct the judge to return: {"verdict": "PASS" or "FAIL", "critique": "short explanation"}.
+- Rubric template for "value" field:
+  "Evaluate whether the response [specific criterion]. PASS if [concrete, observable pass condition]. FAIL if [concrete, observable fail condition]. Do not evaluate [out-of-scope aspects]. Respond with JSON: {\"verdict\": \"PASS\" or \"FAIL\", \"critique\": \"one sentence explaining your judgment\"}."
+
+## Type selection
+
+- Never use assertion types "javascript" or "python" (no code-execution assertions).
+- Do not output YAML, full Promptfoo config, or executable code — only the JSON object below.
+
+Return ONLY valid JSON (no markdown fences) with this exact shape:
+{"suggestions":[{"type":"deterministic"|"llm","assertionType":"<type>","metric":"<short label>","value":"<string>","explanation":"<brief why>"}]}
+
+Field rules:
+- "type": "deterministic" for objective checks; "llm" for rubric/judge-style checks.
+- assertionType MUST be one of: ${allTypesList}
+  (Deterministic: ${deterministicList}; LLM judges: ${llmList}.)
+- For deterministic types, "value" is the literal, pattern, or structured check the evaluator needs.
+- For llm-rubric, "value" MUST be a complete rubric following the template above (criterion, pass condition, fail condition, exclusions, JSON output instruction).
+- "metric" is a concise label for results tables.
+- "explanation" is one short sentence on what this assertion checks.`;
+}
+
 export async function POST(req: Request) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -132,7 +283,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const { prompts, existingAssertions, testsSummary, instructions, vendor: requestedVendor, model: requestedModel, temperature: requestedTemperature } = parsed.data;
+  const { prompts, existingAssertions, requirements, testsSummary, instructions, vendor: requestedVendor, model: requestedModel, temperature: requestedTemperature } = parsed.data;
   const vendor = requestedVendor?.trim() || 'openai';
   const model =
     requestedModel?.trim() || process.env.OPENAI_ASSERTION_MODEL?.trim() || 'gpt-4.1-2025-04-14';
@@ -145,9 +296,43 @@ export async function POST(req: Request) {
   const generatableTypes = ALL_ASSERTION_TYPES.filter((t) => !DISALLOWED_GENERATION_TYPES.has(t));
   const allTypesList = generatableTypes.join(', ');
 
+  const hasRequirements = requirements && requirements.length > 0;
+
+  const actionableRequirements = hasRequirements
+    ? requirements.filter((r) => {
+        const priority = r.priority ?? 'important';
+        const strategy = r.assertionStrategy ?? 'llm-judge';
+        return priority !== 'optional' && strategy !== 'none-yet';
+      })
+    : [];
+
+  const optionalRequirements = hasRequirements
+    ? requirements.filter((r) => {
+        const priority = r.priority ?? 'important';
+        const strategy = r.assertionStrategy ?? 'llm-judge';
+        return priority === 'optional' || strategy === 'none-yet';
+      })
+    : [];
+
+  const requirementsBlock = hasRequirements
+    ? [
+        '## Confirmed requirements (generate assertions for these)',
+        JSON.stringify(actionableRequirements, null, 2),
+        ...(optionalRequirements.length > 0
+          ? [
+              '',
+              '## Optional / deferred requirements (do NOT generate assertions for these unless they naturally merge with a critical/important requirement above)',
+              JSON.stringify(optionalRequirements, null, 2),
+            ]
+          : []),
+      ].join('\n')
+    : '';
+
   const userBlock = [
-    '## Prompt content (exactly as configured — analyze as written; do not rewrite, summarize, or improve it)',
+    '## Prompt content (provided for context — do not rewrite, summarize, or improve it)',
     JSON.stringify(prompts, null, 2),
+    '',
+    requirementsBlock,
     '',
     '## Existing assertions (avoid overlap with these)',
     JSON.stringify(existingAssertions, null, 2),
@@ -155,49 +340,9 @@ export async function POST(req: Request) {
     instructions ? `\n## Extra instructions from the user\n${instructions}` : '',
   ].join('\n');
 
-  const systemPrompt = `You are generating evaluation assertions for the provided prompt(s).
-
-Analyze the prompt exactly as given in the user message. Do not rewrite, summarize, or improve the prompt text.
-
-Your goal is a short, high-value set of assertions for Promptfoo to evaluate outputs from this prompt.
-
-Focus on:
-1. The prompt’s core instructions and constraints
-2. The most important output quality expectations
-3. The most likely failure modes or edge cases
-4. Criteria that are practical and useful for evaluation
-
-Generation rules:
-- Produce only 3 to 5 assertions in "suggestions" (never more than 5). If the prompt content is missing or unusable, return {"suggestions":[]}.
-- Include only the most important assertions; avoid overlap, duplication, and low-value checks.
-- Keep each assertion specific, testable, and focused on one idea.
-- Prefer assertions directly useful in real evaluation workflows.
-
-Assertion type rules:
-- Generate a mix of types when appropriate.
-- Use llm-rubric for subjective or qualitative checks (tone, clarity, helpfulness, completeness, instruction-following, safety).
-- Use deterministic Promptfoo assertion types for objective checks (exact match, contains / not-contains, banned terms, JSON structure, regex, word count, length limits) when they fit naturally.
-- Do not force deterministic assertions if the prompt does not support them.
-- Never use assertion types "javascript" or "python" (no code-execution assertions).
-- Do not output YAML, full Promptfoo config, or executable code — only the JSON object below.
-
-Prioritization:
-- Prefer key assertions over comprehensive coverage.
-- If both deterministic and rubric assertions are useful, include both.
-- If the prompt is mostly subjective, favor llm-rubric.
-- If the prompt has clear hard constraints, include deterministic assertions where they fit best.
-
-Return ONLY valid JSON (no markdown fences) with this exact shape:
-{"suggestions":[{"type":"deterministic"|"llm","assertionType":"<type>","metric":"<short label>","value":"<string>","explanation":"<brief why>"}]}
-
-Field rules:
-- "type": "deterministic" for objective checks; "llm" for rubric/judge-style checks.
-- assertionType MUST be one of: ${allTypesList}
-  (Deterministic examples: ${deterministicList}; LLM judges: ${llmList}.)
-- For deterministic types, "value" is the literal, pattern, or structured check the evaluator needs.
-- For llm-rubric (and similar), "value" is the grading rubric with explicit PASS/FAIL criteria.
-- "metric" is a concise label for results tables.
-- "explanation" is one short sentence on what this assertion checks.`;
+  const systemPrompt = hasRequirements
+    ? buildRequirementDrivenPrompt(allTypesList, deterministicList, llmList)
+    : buildLegacyPrompt(allTypesList, deterministicList, llmList);
 
   let completion: Response;
   try {
@@ -267,8 +412,8 @@ Field rules:
 
   let envelope: z.infer<typeof openAiEnvelopeSchema>;
   try {
-    const parsed = JSON.parse(stripJsonFence(text));
-    envelope = openAiEnvelopeSchema.parse(parsed);
+    const raw = JSON.parse(stripJsonFence(text));
+    envelope = openAiEnvelopeSchema.parse(raw);
   } catch (e) {
     console.error('[generate-assertions] Failed to parse model output:', text, e);
     return NextResponse.json(
@@ -277,7 +422,10 @@ Field rules:
     );
   }
 
-  const normalized = envelope.suggestions.map(normalizeSuggestion).slice(0, 5);
+  const maxAssertions = hasRequirements
+    ? Math.min(Math.max(actionableRequirements.length, 3), 7)
+    : 5;
+  const normalized = envelope.suggestions.map(normalizeSuggestion).slice(0, maxAssertions);
 
   return NextResponse.json({ suggestions: normalized });
 }

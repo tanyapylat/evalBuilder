@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Plus,
   Trash2,
@@ -17,6 +17,9 @@ import {
   RefreshCw,
   HelpCircle,
   Code2,
+  Loader2,
+  Edit2,
+  ArrowRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -76,11 +79,23 @@ import {
   DEFAULT_TEMPERATURE,
   vendorModelId,
   parseVendorModelId,
+  REQUIREMENT_CATEGORIES,
+  REQUIREMENT_PRIORITIES,
+  REQUIREMENT_STRATEGIES,
   type Assertion,
   type AssertionType,
   type EvalConfig,
   type JudgeProviderConfig,
+  type Requirement,
+  type RequirementCategory,
+  type RequirementPriority,
+  type RequirementAssertionStrategy,
 } from '@/lib/eval-types';
+
+const GENERATABLE_ASSERTION_TYPES: AssertionType[] = [
+  ...DETERMINISTIC_ASSERTIONS.filter((t) => t !== 'javascript' && t !== 'python'),
+  ...LLM_ASSERTIONS,
+];
 import { ModelSettingsFields, type ModelSettingsValues } from '@/components/eval/model-settings-fields';
 import { CodeAssertionEditor } from '@/components/eval/code-assertion-editor';
 import { generateId } from '@/lib/yaml-utils';
@@ -805,6 +820,253 @@ function assertionsFromSuggestions(suggestions: AssertionSuggestion[]): Assertio
   });
 }
 
+const CATEGORY_COLORS: Record<RequirementCategory, string> = {
+  structure: 'border-blue-500/40 bg-blue-500/10 text-blue-600 dark:text-blue-400',
+  constraint: 'border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400',
+  tone: 'border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-400',
+  correctness: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+  format: 'border-cyan-500/40 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400',
+  safety: 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  content: 'border-indigo-500/40 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400',
+  behavior: 'border-pink-500/40 bg-pink-500/10 text-pink-600 dark:text-pink-400',
+};
+
+const STRATEGY_LABELS: Record<RequirementAssertionStrategy, { label: string; color: string }> = {
+  deterministic: { label: 'deterministic', color: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' },
+  code: { label: 'code', color: 'border-blue-500/40 bg-blue-500/10 text-blue-600 dark:text-blue-400' },
+  'llm-judge': { label: 'llm judge', color: 'border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-400' },
+  'none-yet': { label: 'skip', color: 'border-muted-foreground/30 bg-muted/50 text-muted-foreground' },
+};
+
+type WizardStep = 'extracting' | 'review' | 'generating';
+
+function getAssertionTypesForStrategy(strategy: RequirementAssertionStrategy): AssertionType[] {
+  switch (strategy) {
+    case 'deterministic':
+      return DETERMINISTIC_ASSERTIONS.filter((t) => t !== 'javascript' && t !== 'python');
+    case 'code':
+      return ['javascript', 'python'] as AssertionType[];
+    case 'llm-judge':
+      return [...LLM_ASSERTIONS];
+    default:
+      return GENERATABLE_ASSERTION_TYPES;
+  }
+}
+
+function RequirementRow({
+  requirement,
+  onUpdate,
+  onDelete,
+}: {
+  requirement: Requirement;
+  onUpdate: (r: Requirement) => void;
+  onDelete: () => void;
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState(requirement.text);
+
+  const saveEdit = () => {
+    const trimmed = editText.trim();
+    if (trimmed) {
+      onUpdate({ ...requirement, text: trimmed });
+    }
+    setIsEditing(false);
+  };
+
+  const colorClass = CATEGORY_COLORS[requirement.category] || CATEGORY_COLORS.behavior;
+  const strategyInfo = STRATEGY_LABELS[requirement.assertionStrategy] || STRATEGY_LABELS['llm-judge'];
+  const isExcluded = !requirement.included;
+  const availableTypes = getAssertionTypesForStrategy(requirement.assertionStrategy);
+
+  return (
+    <div className={cn(
+      'flex items-start gap-2 rounded-lg border bg-card p-3',
+      isExcluded ? 'border-dashed border-muted-foreground/20 opacity-50' : 'border-border',
+    )}>
+      <Checkbox
+        checked={requirement.included}
+        onCheckedChange={(checked) => onUpdate({ ...requirement, included: !!checked })}
+        aria-label={`Include requirement: ${requirement.text.slice(0, 40)}`}
+        className="mt-1 shrink-0"
+      />
+      <div className="flex-1 min-w-0 space-y-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge variant="outline" className={cn('shrink-0 text-[10px] font-normal', colorClass)}>
+            {requirement.category}
+          </Badge>
+          <Badge variant="outline" className={cn('shrink-0 text-[10px] font-normal', strategyInfo.color)}>
+            {strategyInfo.label}
+          </Badge>
+          {requirement.source === 'manual' && (
+            <Badge variant="outline" className="shrink-0 text-[10px] font-normal border-muted-foreground/30 text-muted-foreground">
+              manual
+            </Badge>
+          )}
+        </div>
+        {isEditing ? (
+          <div className="flex gap-2">
+            <Textarea
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              className="min-h-[60px] text-sm"
+              rows={2}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  saveEdit();
+                }
+              }}
+            />
+            <div className="flex flex-col gap-1 shrink-0">
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={saveEdit}>
+                <Check className="h-3.5 w-3.5" />
+              </Button>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setIsEditing(false); setEditText(requirement.text); }}>
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <p className={cn('text-sm', isExcluded ? 'text-muted-foreground line-through' : 'text-foreground')}>
+            {requirement.text}
+          </p>
+        )}
+        {!isEditing && (
+          <div className="flex flex-wrap items-center gap-2 pt-0.5">
+            <Select
+              value={requirement.assertionStrategy}
+              onValueChange={(v) => {
+                const newStrategy = v as RequirementAssertionStrategy;
+                const newTypes = getAssertionTypesForStrategy(newStrategy);
+                const currentType = requirement.recommendedAssertionType;
+                const typeStillValid = currentType && newTypes.includes(currentType);
+                onUpdate({
+                  ...requirement,
+                  assertionStrategy: newStrategy,
+                  recommendedAssertionType: typeStillValid ? currentType : newTypes[0],
+                  included: newStrategy !== 'none-yet' ? requirement.included : false,
+                });
+              }}
+            >
+              <SelectTrigger className="h-6 w-[110px] text-[10px] border-dashed">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {REQUIREMENT_STRATEGIES.map((s) => (
+                  <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {requirement.assertionStrategy !== 'none-yet' && (
+              <Select
+                value={requirement.recommendedAssertionType ?? availableTypes[0] ?? ''}
+                onValueChange={(v) => onUpdate({ ...requirement, recommendedAssertionType: v as AssertionType })}
+              >
+                <SelectTrigger className="h-6 w-[140px] text-[10px] border-dashed">
+                  <SelectValue placeholder="assertion type" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableTypes.map((t) => (
+                    <SelectItem key={t} value={t} className="text-xs">{t}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+        )}
+      </div>
+      {!isEditing && (
+        <div className="flex shrink-0 gap-0.5">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+            onClick={() => { setEditText(requirement.text); setIsEditing(true); }}
+          >
+            <Edit2 className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+            onClick={onDelete}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AddRequirementForm({ onAdd }: { onAdd: (r: Omit<Requirement, 'id'>) => void }) {
+  const [text, setText] = useState('');
+  const [category, setCategory] = useState<RequirementCategory>('behavior');
+  const [strategy, setStrategy] = useState<RequirementAssertionStrategy>('llm-judge');
+
+  const handleAdd = () => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    onAdd({
+      text: trimmed,
+      category,
+      priority: 'important',
+      assertionStrategy: strategy,
+      recommendedAssertionType: strategy === 'deterministic' ? 'contains' : strategy === 'code' ? 'javascript' : strategy === 'llm-judge' ? 'llm-rubric' : undefined,
+      included: strategy !== 'none-yet',
+      source: 'manual',
+    });
+    setText('');
+  };
+
+  return (
+    <div className="rounded-lg border border-dashed border-border p-3 space-y-2">
+      <div className="flex gap-2">
+        <Textarea
+          placeholder="Add a requirement manually..."
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={2}
+          className="flex-1 min-h-[60px] text-sm"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              handleAdd();
+            }
+          }}
+        />
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Select value={category} onValueChange={(v) => setCategory(v as RequirementCategory)}>
+          <SelectTrigger className="h-8 w-28 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {REQUIREMENT_CATEGORIES.map((c) => (
+              <SelectItem key={c} value={c}>{c}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={strategy} onValueChange={(v) => setStrategy(v as RequirementAssertionStrategy)}>
+          <SelectTrigger className="h-8 w-32 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {REQUIREMENT_STRATEGIES.map((s) => (
+              <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button size="sm" onClick={handleAdd} disabled={!text.trim()} className="h-8">
+          <Plus className="mr-1.5 h-3.5 w-3.5" />
+          Add
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function GenerateAssertionsDialog({
   open,
   onOpenChange,
@@ -819,30 +1081,154 @@ function GenerateAssertionsDialog({
   const { config } = useEval();
   const { loadPromptVersionContent } = usePromptCatalog();
   const { getLivePromptContent } = usePromptDrafts();
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [instructions, setInstructions] = useState('');
 
-  const handleGenerate = async () => {
+  const [step, setStep] = useState<WizardStep>('extracting');
+  const [requirements, setRequirements] = useState<Requirement[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [userHasEdited, setUserHasEdited] = useState(false);
+  const [confirmReExtract, setConfirmReExtract] = useState(false);
+  const [postGenAction, setPostGenAction] = useState<'replace' | 'append'>('replace');
+
+  const hasExistingAssertions = config.defaultTest.assert.length > 0;
+
+  const resolvePrompts = useCallback(async () => {
+    return Promise.all(
+      config.prompts.map(async (p) => {
+        const live = getLivePromptContent(p);
+        const content =
+          live ?? (await loadPromptVersionContent(p.promptId, p.versionId));
+        return { label: p.label, content };
+      }),
+    );
+  }, [config.prompts, getLivePromptContent, loadPromptVersionContent]);
+
+  const parseExtractedRequirements = (
+    data: Array<{
+      text: string;
+      category: string;
+      priority?: string;
+      assertionStrategy?: string;
+      recommendedAssertionType?: string;
+    }>,
+  ): Requirement[] =>
+    data.map((r) => {
+      const strategy = (REQUIREMENT_STRATEGIES as readonly string[]).includes(r.assertionStrategy ?? '')
+        ? (r.assertionStrategy as RequirementAssertionStrategy)
+        : 'llm-judge';
+      const recType = r.recommendedAssertionType && GENERATABLE_ASSERTION_TYPES.includes(r.recommendedAssertionType as AssertionType)
+        ? (r.recommendedAssertionType as AssertionType)
+        : strategy === 'deterministic' ? 'contains' : strategy === 'code' ? 'javascript' : 'llm-rubric';
+      return {
+        id: generateId(),
+        text: r.text,
+        category: (REQUIREMENT_CATEGORIES as readonly string[]).includes(r.category)
+          ? (r.category as RequirementCategory)
+          : 'behavior',
+        priority: (REQUIREMENT_PRIORITIES as readonly string[]).includes(r.priority ?? '')
+          ? (r.priority as RequirementPriority)
+          : 'important',
+        assertionStrategy: strategy,
+        recommendedAssertionType: strategy !== 'none-yet' ? recType : undefined,
+        included: strategy !== 'none-yet',
+        source: 'extracted' as const,
+      };
+    });
+
+  const startExtraction = useCallback(async () => {
     if (config.prompts.length === 0) {
       toast.error('Add at least one prompt in Prompt Source first.');
       return;
     }
 
-    setIsGenerating(true);
+    setStep('extracting');
+    setError(null);
     try {
-      const promptsPayload = await Promise.all(
-        config.prompts.map(async (p) => {
-          const live = getLivePromptContent(p);
-          const content =
-            live ?? (await loadPromptVersionContent(p.promptId, p.versionId));
-          return {
-            label: p.label,
-            content,
-          };
-        }),
-      );
+      const promptsPayload = await resolvePrompts();
 
-      const existingAssertions = mode === 'regenerate'
+      const res = await fetch('/api/extract-requirements', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompts: promptsPayload }),
+      });
+
+      const data = (await res.json()) as {
+        requirements?: Array<{
+          text: string;
+          category: string;
+          priority?: string;
+          assertionStrategy?: string;
+          recommendedAssertionType?: string;
+        }>;
+        error?: string;
+      };
+
+      if (!res.ok || !data.requirements) {
+        throw new Error(data.error ?? 'Requirement extraction failed');
+      }
+
+      if (data.requirements.length === 0) {
+        toast.warning('No requirements could be extracted. Try a different prompt.');
+        setStep('review');
+        return;
+      }
+
+      setRequirements(parseExtractedRequirements(data.requirements));
+      setUserHasEdited(false);
+      setStep('review');
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+      setStep('review');
+    }
+  }, [config.prompts, resolvePrompts]);
+
+  const handleReExtract = () => {
+    if (userHasEdited) {
+      setConfirmReExtract(true);
+    } else {
+      startExtraction();
+    }
+  };
+
+  useEffect(() => {
+    if (open) {
+      setRequirements([]);
+      setError(null);
+      setUserHasEdited(false);
+      setPostGenAction(mode === 'regenerate' ? 'replace' : hasExistingAssertions ? 'append' : 'replace');
+      startExtraction();
+    }
+  }, [open, startExtraction]);
+
+  const handleUpdateRequirement = (id: string, updated: Requirement) => {
+    setRequirements((prev) => prev.map((r) => (r.id === id ? updated : r)));
+    setUserHasEdited(true);
+  };
+
+  const handleDeleteRequirement = (id: string) => {
+    setRequirements((prev) => prev.filter((r) => r.id !== id));
+    setUserHasEdited(true);
+  };
+
+  const handleAddRequirement = (r: Omit<Requirement, 'id'>) => {
+    setRequirements((prev) => [...prev, { ...r, id: generateId() }]);
+    setUserHasEdited(true);
+  };
+
+  const includedRequirements = requirements.filter((r) => r.included);
+
+  const handleGenerateAssertions = async () => {
+    if (includedRequirements.length === 0) {
+      toast.error('Include at least one requirement before generating assertions.');
+      return;
+    }
+
+    setStep('generating');
+    setError(null);
+    try {
+      const promptsPayload = await resolvePrompts();
+
+      const existingAssertions = postGenAction === 'replace'
         ? []
         : config.defaultTest.assert.map((a) => ({
             type: a.type,
@@ -856,8 +1242,14 @@ function GenerateAssertionsDialog({
         body: JSON.stringify({
           prompts: promptsPayload,
           existingAssertions,
+          requirements: includedRequirements.map((r) => ({
+            text: r.text,
+            category: r.category,
+            priority: r.priority,
+            assertionStrategy: r.assertionStrategy,
+            recommendedAssertionType: r.recommendedAssertionType,
+          })),
           testsSummary: buildTestsSummary(config.tests),
-          instructions: instructions.trim() || undefined,
         }),
       });
 
@@ -873,7 +1265,8 @@ function GenerateAssertionsDialog({
       }
 
       if (data.suggestions.length === 0) {
-        toast.warning('No assertions were returned. Check your prompt or try again.');
+        toast.warning('No assertions were returned. Try adjusting your requirements.');
+        setStep('review');
         return;
       }
 
@@ -887,22 +1280,15 @@ function GenerateAssertionsDialog({
       }));
 
       const added = assertionsFromSuggestions(withIds);
-      const resolvedMode = mode === 'regenerate' ? 'replace' : 'add';
-      onAccept(added, resolvedMode);
-      const verb = mode === 'regenerate' ? 'Regenerated' : 'Added';
-      toast.success(`${verb} ${added.length} assertion${added.length === 1 ? '' : 's'}`);
+      onAccept(added, postGenAction === 'replace' ? 'replace' : 'add');
+      const verb = postGenAction === 'replace' ? 'Replaced with' : 'Added';
+      toast.success(`${verb} ${added.length} assertion${added.length === 1 ? '' : 's'} from ${includedRequirements.length} requirement${includedRequirements.length === 1 ? '' : 's'}`);
       onOpenChange(false);
-      setInstructions('');
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       toast.error(message);
-    } finally {
-      setIsGenerating(false);
+      setStep('review');
     }
-  };
-
-  const resetOnClose = () => {
-    setInstructions('');
   };
 
   const title = mode === 'regenerate'
@@ -911,75 +1297,219 @@ function GenerateAssertionsDialog({
       ? 'Generate Additional Assertions'
       : 'Generate Assertions';
 
-  const description = mode === 'regenerate'
-    ? 'Replaces all existing assertions with a fresh set generated from your prompt.'
-    : 'Analyzes your Prompt Source text as written (saved or unsaved editor buffer), avoids overlap with existing assertions, and adds 3\u20135 assertions to the list below.';
-
-  const buttonLabel = mode === 'regenerate'
-    ? 'Regenerate assertions'
-    : 'Generate & add assertions';
-
   const ButtonIcon = mode === 'regenerate' ? RefreshCw : Sparkles;
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        onOpenChange(o);
-        if (!o) resetOnClose();
-      }}
-    >
-      <DialogContent className="flex max-h-[80vh] max-w-2xl flex-col overflow-hidden">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <ButtonIcon className="h-5 w-5 text-primary" />
-            {title}
-          </DialogTitle>
-          <DialogDescription>
-            {description}{' '}
-            Requires <code className="rounded bg-muted px-1 text-xs">OPENAI_API_KEY</code> on the server.
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          if (!o) {
+            onOpenChange(false);
+          }
+        }}
+      >
+        <DialogContent className="flex max-h-[85vh] max-w-2xl flex-col overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ButtonIcon className="h-5 w-5 text-primary" />
+              {title}
+            </DialogTitle>
+            <DialogDescription>
+              {step === 'extracting'
+                ? 'Analyzing your prompt to extract testable requirements...'
+                : step === 'review'
+                  ? 'Review, edit, or add requirements. Assertions will be generated from included requirements.'
+                  : 'Generating assertions from your confirmed requirements...'}
+            </DialogDescription>
+          </DialogHeader>
 
-        <div className="flex-1 overflow-auto py-4">
-          <div className="space-y-4 px-1 py-2">
-            {mode === 'regenerate' && (
-              <p className="text-center text-sm text-destructive">
-                All existing assertions will be replaced.
-              </p>
-            )}
-            <p className="text-center text-sm text-muted-foreground">
-              Optional hints for the generator (tone, constraints, or assertion mix).
-            </p>
-            <div className="space-y-2">
-              <Label htmlFor="assertion-gen-instructions" className="text-xs font-medium text-muted-foreground">
-                Generation instructions (optional)
-              </Label>
-              <Textarea
-                id="assertion-gen-instructions"
-                placeholder="e.g. One rubric for instruction-following; one contains check for required disclaimer…"
-                value={instructions}
-                onChange={(e) => setInstructions(e.target.value)}
-                rows={3}
-                className="resize-none text-sm"
-              />
-            </div>
-            <div className="flex justify-center pt-1">
-              <Button onClick={handleGenerate} disabled={isGenerating}>
-                {isGenerating ? (
-                  'Generating…'
-                ) : (
-                  <>
-                    <ButtonIcon className="mr-2 h-4 w-4" />
-                    {buttonLabel}
-                  </>
-                )}
-              </Button>
-            </div>
+          {/* Step indicator */}
+          <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+            <span className={cn('font-medium', step === 'extracting' && 'text-primary')}>
+              1. Extract
+            </span>
+            <ArrowRight className="h-3 w-3" />
+            <span className={cn('font-medium', step === 'review' && 'text-primary')}>
+              2. Review
+            </span>
+            <ArrowRight className="h-3 w-3" />
+            <span className={cn('font-medium', step === 'generating' && 'text-primary')}>
+              3. Generate
+            </span>
           </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+
+          <div className="flex-1 overflow-auto py-2">
+            {/* Step 1: Extracting */}
+            {step === 'extracting' && (
+              <div className="flex flex-col items-center justify-center py-12 gap-3">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <p className="text-sm text-muted-foreground">
+                  Analyzing prompt to extract requirements...
+                </p>
+              </div>
+            )}
+
+            {/* Step 2: Review requirements */}
+            {step === 'review' && (
+              <div className="space-y-4 px-1">
+                {error && (
+                  <Alert className="border-destructive/50 bg-destructive/10">
+                    <Info className="h-4 w-4 text-destructive" />
+                    <AlertDescription className="text-sm text-destructive">
+                      {error} — You can still add requirements manually below.
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {requirements.length > 0 && (() => {
+                  const includedCount = includedRequirements.length;
+                  const excludedCount = requirements.length - includedCount;
+
+                  return (
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-muted-foreground">
+                          {requirements.length} requirement{requirements.length === 1 ? '' : 's'}
+                          {excludedCount > 0 && (
+                            <span className="text-muted-foreground/70">
+                              {' '}({excludedCount} excluded)
+                            </span>
+                          )}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 text-[10px] px-2"
+                            onClick={() => {
+                              setRequirements((prev) => prev.map((r) => ({ ...r, included: true })));
+                              setUserHasEdited(true);
+                            }}
+                          >
+                            Include all
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 text-[10px] px-2"
+                            onClick={() => {
+                              setRequirements((prev) => prev.map((r) => ({ ...r, included: false })));
+                              setUserHasEdited(true);
+                            }}
+                          >
+                            Exclude all
+                          </Button>
+                        </div>
+                      </div>
+                      {includedCount > 0 && (
+                        <p className="text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2">
+                          Assertions will be generated for {includedCount} included requirement{includedCount === 1 ? '' : 's'}.
+                          {' '}Use the checkbox to include or skip each requirement. Adjust the assertion type recommendation with the rightmost dropdown.
+                        </p>
+                      )}
+                      {includedCount === 0 && (
+                        <p className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 rounded-md px-3 py-2">
+                          No requirements are included. Check at least one requirement to generate assertions.
+                        </p>
+                      )}
+                      <div className="space-y-2">
+                        {requirements.map((r) => (
+                          <RequirementRow
+                            key={r.id}
+                            requirement={r}
+                            onUpdate={(updated) => handleUpdateRequirement(r.id, updated)}
+                            onDelete={() => handleDeleteRequirement(r.id)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {requirements.length === 0 && !error && (
+                  <p className="text-center text-sm text-muted-foreground py-4">
+                    No requirements extracted. Add some manually below.
+                  </p>
+                )}
+
+                <AddRequirementForm onAdd={handleAddRequirement} />
+
+                {hasExistingAssertions && (
+                  <div className="flex items-center gap-3 rounded-md border border-border bg-muted/30 px-3 py-2">
+                    <span className="text-xs font-medium text-muted-foreground shrink-0">
+                      Existing assertions:
+                    </span>
+                    <Select
+                      value={postGenAction}
+                      onValueChange={(v) => setPostGenAction(v as 'replace' | 'append')}
+                    >
+                      <SelectTrigger className="h-7 w-[180px] text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="replace" className="text-xs">Replace all</SelectItem>
+                        <SelectItem value="append" className="text-xs">Append new assertions</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Step 3: Generating */}
+            {step === 'generating' && (
+              <div className="flex flex-col items-center justify-center py-12 gap-3">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <p className="text-sm text-muted-foreground">
+                  Generating assertions from {includedRequirements.length} requirement{includedRequirements.length === 1 ? '' : 's'}...
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Footer actions */}
+          {step === 'review' && (
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="outline" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleReExtract}
+              >
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Re-extract
+              </Button>
+              <Button
+                onClick={handleGenerateAssertions}
+                disabled={includedRequirements.length === 0}
+              >
+                <Sparkles className="mr-2 h-4 w-4" />
+                Confirm &amp; Generate
+              </Button>
+            </DialogFooter>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={confirmReExtract} onOpenChange={setConfirmReExtract}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Re-extract requirements?</AlertDialogTitle>
+            <AlertDialogDescription>
+              You have modified the extracted requirements. Re-extracting will replace all current requirements with a fresh extraction from the prompt. Your edits will be lost.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep My Edits</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { setConfirmReExtract(false); startExtraction(); }}>
+              Re-extract
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
