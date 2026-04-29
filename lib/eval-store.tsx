@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useReducer, useCallback, useMemo, useRef } from 'react';
 import { toast } from 'sonner';
-import type { EvalConfig, Assertion, TestCase, PromptConfig, JudgeProviderConfig, SavedConfig, EvalRun, EvalRunStatus } from './eval-types';
+import type { EvalConfig, Assertion, TestCase, PromptConfig, JudgeProviderConfig, SavedConfig, EvalRun, EvalRunStatus, Requirement } from './eval-types';
 import { DEFAULT_EVAL_CONFIG } from './eval-types';
 import { configToYaml, generateId } from './yaml-utils';
 
@@ -40,6 +40,7 @@ type EvalAction =
   | { type: 'DELETE_ALL_TESTS' }
   | { type: 'REPLACE_ALL_TESTS'; payload: TestCase[] }
   | { type: 'SET_TESTS_URL'; payload: string }
+  | { type: 'SET_REQUIREMENTS'; payload: Requirement[] }
   | { type: 'SET_RAW_YAML'; payload: string }
   | { type: 'RESET' };
 
@@ -185,6 +186,9 @@ function evalReducer(state: EvalConfig, action: EvalAction): EvalConfig {
     case 'SET_TESTS_URL':
       return { ...state, tests: action.payload };
 
+    case 'SET_REQUIREMENTS':
+      return { ...state, requirements: action.payload };
+
     case 'SET_RAW_YAML':
       return { ...state, rawYaml: action.payload };
 
@@ -231,6 +235,7 @@ interface EvalContextType {
   deleteAllTests: () => void;
   replaceAllTests: (tests: TestCase[]) => void;
   setTestsUrl: (url: string) => void;
+  setRequirements: (requirements: Requirement[]) => void;
   setRawYaml: (yaml: string) => void;
   saveConfig: () => void;
   loadConfig: (id: string) => void;
@@ -379,6 +384,10 @@ export function EvalProvider({ children }: { children: React.ReactNode }) {
 
   const setTestsUrl = useCallback((url: string) => {
     dispatch({ type: 'SET_TESTS_URL', payload: url });
+  }, []);
+
+  const setRequirements = useCallback((requirements: Requirement[]) => {
+    dispatch({ type: 'SET_REQUIREMENTS', payload: requirements });
   }, []);
 
   const setRawYaml = useCallback((yamlStr: string) => {
@@ -606,6 +615,7 @@ export function EvalProvider({ children }: { children: React.ReactNode }) {
         deleteAllTests,
         replaceAllTests,
         setTestsUrl,
+        setRequirements,
         setRawYaml,
         saveConfig,
         loadConfig,

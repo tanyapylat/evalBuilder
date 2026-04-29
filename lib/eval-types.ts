@@ -56,6 +56,8 @@ export interface Assertion {
   value: string | string[] | number;
   threshold?: number;
   provider?: JudgeProviderConfig;
+  /** IDs of source requirements this assertion was generated from. */
+  sourceRequirementIds?: string[];
 }
 
 export interface TestCase {
@@ -119,6 +121,8 @@ export interface EvalConfig {
     assert: Assertion[];
   };
   tests: TestCase[] | string;
+  /** Requirements used to generate assertions (persisted for traceability). */
+  requirements?: Requirement[];
   rawYaml?: string;
   unsupportedSections?: Record<string, unknown>;
 }

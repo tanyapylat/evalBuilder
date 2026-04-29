@@ -26,6 +26,7 @@ const promptContentSchema = z.object({
 });
 
 const requirementSchema = z.object({
+  id: z.string().optional(),
   text: z.string(),
   category: z.string(),
   priority: z.string().optional(),
@@ -67,6 +68,7 @@ const rawSuggestionSchema = z.object({
       return v;
     }),
   explanation: z.string(),
+  coveredRequirementIndices: z.array(z.number()).optional(),
 });
 
 const openAiEnvelopeSchema = z.object({
@@ -95,6 +97,7 @@ function normalizeSuggestion(s: z.infer<typeof rawSuggestionSchema>): {
   metric: string;
   value: string;
   explanation: string;
+  coveredRequirementIndices?: number[];
 } {
   let assertionType = normalizeAssertionType(s.type, s.assertionType);
   let type = s.type;
@@ -108,6 +111,7 @@ function normalizeSuggestion(s: z.infer<typeof rawSuggestionSchema>): {
     metric: s.metric,
     value: s.value,
     explanation: s.explanation,
+    coveredRequirementIndices: s.coveredRequirementIndices,
   };
 }
 
@@ -179,7 +183,7 @@ If any answer is no, skip it.
 - Do not output YAML, Promptfoo config, or executable code.
 
 Return ONLY valid JSON (no markdown fences) with this exact shape:
-{"suggestions":[{"type":"deterministic"|"llm","assertionType":"<type>","metric":"<short label>","value":"<string>","explanation":"<brief why — mention which requirement(s) this covers>"}]}
+{"suggestions":[{"type":"deterministic"|"llm","assertionType":"<type>","metric":"<short label>","value":"<string>","explanation":"<brief why — mention which requirement(s) this covers>","coveredRequirementIndices":[0]}]}
 
 Field rules:
 - "type": "deterministic" for objective checks; "llm" for rubric/judge-style checks.
@@ -188,7 +192,8 @@ Field rules:
 - For deterministic types, "value" is the literal, pattern, or structured check the evaluator needs.
 - For llm-rubric, "value" MUST be a complete rubric following the template above (criterion, pass condition, fail condition, exclusions, JSON output instruction).
 - "metric" is a concise label for results tables.
-- "explanation" is one short sentence on which requirement(s) this assertion covers.`;
+- "explanation" is one short sentence on which requirement(s) this assertion covers.
+- "coveredRequirementIndices" is an array of zero-based indices into the confirmed requirements array, indicating which requirement(s) this assertion validates. Every assertion MUST cover at least one requirement. If an assertion covers multiple merged requirements, list all their indices.`;
 }
 
 function buildLegacyPrompt(
@@ -314,10 +319,20 @@ export async function POST(req: Request) {
       })
     : [];
 
+  const indexedActionableRequirements = actionableRequirements.map((r, i) => ({
+    index: i,
+    id: r.id,
+    text: r.text,
+    category: r.category,
+    priority: r.priority,
+    assertionStrategy: r.assertionStrategy,
+    recommendedAssertionType: r.recommendedAssertionType,
+  }));
+
   const requirementsBlock = hasRequirements
     ? [
-        '## Confirmed requirements (generate assertions for these)',
-        JSON.stringify(actionableRequirements, null, 2),
+        '## Confirmed requirements (generate assertions for these — use "index" to reference them in coveredRequirementIndices)',
+        JSON.stringify(indexedActionableRequirements, null, 2),
         ...(optionalRequirements.length > 0
           ? [
               '',
@@ -425,7 +440,20 @@ export async function POST(req: Request) {
   const maxAssertions = hasRequirements
     ? Math.min(Math.max(actionableRequirements.length, 3), 7)
     : 5;
-  const normalized = envelope.suggestions.map(normalizeSuggestion).slice(0, maxAssertions);
+  const normalized = envelope.suggestions.map((s) => {
+    const n = normalizeSuggestion(s);
+    const sourceRequirementIds = n.coveredRequirementIndices
+      ?.map((idx) => actionableRequirements[idx]?.id)
+      .filter((id): id is string => !!id);
+    return {
+      type: n.type,
+      assertionType: n.assertionType,
+      metric: n.metric,
+      value: n.value,
+      explanation: n.explanation,
+      sourceRequirementIds: sourceRequirementIds?.length ? sourceRequirementIds : undefined,
+    };
+  }).slice(0, maxAssertions);
 
   return NextResponse.json({ suggestions: normalized });
 }

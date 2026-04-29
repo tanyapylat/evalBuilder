@@ -20,6 +20,8 @@ import {
   Loader2,
   Edit2,
   ArrowRight,
+  CheckCircle2,
+  Circle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -335,6 +337,7 @@ interface AssertionEditorProps {
   isNew?: boolean;
   bulkToggle: { id: number; expanded: boolean };
   selected: boolean;
+  requirements?: Requirement[];
   onToggleSelect: () => void;
   onUpdate: (assertion: Assertion) => void;
   onDelete: () => void;
@@ -347,6 +350,7 @@ function AssertionEditor({
   isNew,
   bulkToggle,
   selected,
+  requirements,
   onToggleSelect,
   onUpdate,
   onDelete,
@@ -456,6 +460,12 @@ function AssertionEditor({
                   · {assertion.metric}
                 </span>
               )}
+              {assertion.sourceRequirementIds && assertion.sourceRequirementIds.length > 0 && (
+                <Badge variant="outline" className="shrink-0 text-[10px] font-normal border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400 gap-0.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-sky-500 inline-block" />
+                  {assertion.sourceRequirementIds.length} req
+                </Badge>
+              )}
               {!isExpanded && preview && (
                 <span className="truncate text-xs text-muted-foreground">
                   — {preview}
@@ -497,6 +507,26 @@ function AssertionEditor({
             'border-l-[3px]',
             categoryColor.left,
           )}>
+
+            {/* Source requirements traceability */}
+            {assertion.sourceRequirementIds && assertion.sourceRequirementIds.length > 0 && requirements && (
+              <div className="rounded-md border border-sky-500/20 bg-sky-500/5 px-3 py-2 space-y-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-sky-600 dark:text-sky-400">
+                  Source Requirements
+                </span>
+                <ul className="space-y-0.5">
+                  {assertion.sourceRequirementIds.map((reqId) => {
+                    const req = requirements.find((r) => r.id === reqId);
+                    return req ? (
+                      <li key={reqId} className="text-xs text-foreground flex items-start gap-1.5">
+                        <span className="shrink-0 mt-0.5 h-1.5 w-1.5 rounded-full bg-sky-500" />
+                        {req.text}
+                      </li>
+                    ) : null;
+                  })}
+                </ul>
+              </div>
+            )}
 
             {/* Metric name */}
             <div>
@@ -800,7 +830,11 @@ function buildTestsSummary(tests: EvalConfig['tests']): string | undefined {
   );
 }
 
-function assertionsFromSuggestions(suggestions: AssertionSuggestion[]): Assertion[] {
+interface SuggestionWithTraceability extends AssertionSuggestion {
+  sourceRequirementIds?: string[];
+}
+
+function assertionsFromSuggestions(suggestions: SuggestionWithTraceability[]): Assertion[] {
   return suggestions.map((s) => {
     const isLlmJudge = LLM_ASSERTIONS.includes(s.assertionType);
     return {
@@ -808,6 +842,9 @@ function assertionsFromSuggestions(suggestions: AssertionSuggestion[]): Assertio
       type: s.assertionType,
       metric: s.metric,
       value: s.value,
+      ...(s.sourceRequirementIds?.length
+        ? { sourceRequirementIds: s.sourceRequirementIds }
+        : {}),
       ...(isLlmJudge
         ? {
             provider: {
@@ -820,38 +857,7 @@ function assertionsFromSuggestions(suggestions: AssertionSuggestion[]): Assertio
   });
 }
 
-const CATEGORY_COLORS: Record<RequirementCategory, string> = {
-  structure: 'border-blue-500/40 bg-blue-500/10 text-blue-600 dark:text-blue-400',
-  constraint: 'border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400',
-  tone: 'border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-400',
-  correctness: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-  format: 'border-cyan-500/40 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400',
-  safety: 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400',
-  content: 'border-indigo-500/40 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400',
-  behavior: 'border-pink-500/40 bg-pink-500/10 text-pink-600 dark:text-pink-400',
-};
-
-const STRATEGY_LABELS: Record<RequirementAssertionStrategy, { label: string; color: string }> = {
-  deterministic: { label: 'deterministic', color: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' },
-  code: { label: 'code', color: 'border-blue-500/40 bg-blue-500/10 text-blue-600 dark:text-blue-400' },
-  'llm-judge': { label: 'llm judge', color: 'border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-400' },
-  'none-yet': { label: 'skip', color: 'border-muted-foreground/30 bg-muted/50 text-muted-foreground' },
-};
-
 type WizardStep = 'extracting' | 'review' | 'generating';
-
-function getAssertionTypesForStrategy(strategy: RequirementAssertionStrategy): AssertionType[] {
-  switch (strategy) {
-    case 'deterministic':
-      return DETERMINISTIC_ASSERTIONS.filter((t) => t !== 'javascript' && t !== 'python');
-    case 'code':
-      return ['javascript', 'python'] as AssertionType[];
-    case 'llm-judge':
-      return [...LLM_ASSERTIONS];
-    default:
-      return GENERATABLE_ASSERTION_TYPES;
-  }
-}
 
 function RequirementRow({
   requirement,
@@ -873,10 +879,7 @@ function RequirementRow({
     setIsEditing(false);
   };
 
-  const colorClass = CATEGORY_COLORS[requirement.category] || CATEGORY_COLORS.behavior;
-  const strategyInfo = STRATEGY_LABELS[requirement.assertionStrategy] || STRATEGY_LABELS['llm-judge'];
   const isExcluded = !requirement.included;
-  const availableTypes = getAssertionTypesForStrategy(requirement.assertionStrategy);
 
   return (
     <div className={cn(
@@ -890,19 +893,6 @@ function RequirementRow({
         className="mt-1 shrink-0"
       />
       <div className="flex-1 min-w-0 space-y-1.5">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Badge variant="outline" className={cn('shrink-0 text-[10px] font-normal', colorClass)}>
-            {requirement.category}
-          </Badge>
-          <Badge variant="outline" className={cn('shrink-0 text-[10px] font-normal', strategyInfo.color)}>
-            {strategyInfo.label}
-          </Badge>
-          {requirement.source === 'manual' && (
-            <Badge variant="outline" className="shrink-0 text-[10px] font-normal border-muted-foreground/30 text-muted-foreground">
-              manual
-            </Badge>
-          )}
-        </div>
         {isEditing ? (
           <div className="flex gap-2">
             <Textarea
@@ -932,49 +922,6 @@ function RequirementRow({
             {requirement.text}
           </p>
         )}
-        {!isEditing && (
-          <div className="flex flex-wrap items-center gap-2 pt-0.5">
-            <Select
-              value={requirement.assertionStrategy}
-              onValueChange={(v) => {
-                const newStrategy = v as RequirementAssertionStrategy;
-                const newTypes = getAssertionTypesForStrategy(newStrategy);
-                const currentType = requirement.recommendedAssertionType;
-                const typeStillValid = currentType && newTypes.includes(currentType);
-                onUpdate({
-                  ...requirement,
-                  assertionStrategy: newStrategy,
-                  recommendedAssertionType: typeStillValid ? currentType : newTypes[0],
-                  included: newStrategy !== 'none-yet' ? requirement.included : false,
-                });
-              }}
-            >
-              <SelectTrigger className="h-6 w-[110px] text-[10px] border-dashed">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {REQUIREMENT_STRATEGIES.map((s) => (
-                  <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {requirement.assertionStrategy !== 'none-yet' && (
-              <Select
-                value={requirement.recommendedAssertionType ?? availableTypes[0] ?? ''}
-                onValueChange={(v) => onUpdate({ ...requirement, recommendedAssertionType: v as AssertionType })}
-              >
-                <SelectTrigger className="h-6 w-[140px] text-[10px] border-dashed">
-                  <SelectValue placeholder="assertion type" />
-                </SelectTrigger>
-                <SelectContent>
-                  {availableTypes.map((t) => (
-                    <SelectItem key={t} value={t} className="text-xs">{t}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-        )}
       </div>
       {!isEditing && (
         <div className="flex shrink-0 gap-0.5">
@@ -1002,19 +949,17 @@ function RequirementRow({
 
 function AddRequirementForm({ onAdd }: { onAdd: (r: Omit<Requirement, 'id'>) => void }) {
   const [text, setText] = useState('');
-  const [category, setCategory] = useState<RequirementCategory>('behavior');
-  const [strategy, setStrategy] = useState<RequirementAssertionStrategy>('llm-judge');
 
   const handleAdd = () => {
     const trimmed = text.trim();
     if (!trimmed) return;
     onAdd({
       text: trimmed,
-      category,
+      category: 'behavior',
       priority: 'important',
-      assertionStrategy: strategy,
-      recommendedAssertionType: strategy === 'deterministic' ? 'contains' : strategy === 'code' ? 'javascript' : strategy === 'llm-judge' ? 'llm-rubric' : undefined,
-      included: strategy !== 'none-yet',
+      assertionStrategy: 'llm-judge',
+      recommendedAssertionType: 'llm-rubric',
+      included: true,
       source: 'manual',
     });
     setText('');
@@ -1038,26 +983,6 @@ function AddRequirementForm({ onAdd }: { onAdd: (r: Omit<Requirement, 'id'>) => 
         />
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={category} onValueChange={(v) => setCategory(v as RequirementCategory)}>
-          <SelectTrigger className="h-8 w-28 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {REQUIREMENT_CATEGORIES.map((c) => (
-              <SelectItem key={c} value={c}>{c}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={strategy} onValueChange={(v) => setStrategy(v as RequirementAssertionStrategy)}>
-          <SelectTrigger className="h-8 w-32 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {REQUIREMENT_STRATEGIES.map((s) => (
-              <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
         <Button size="sm" onClick={handleAdd} disabled={!text.trim()} className="h-8">
           <Plus className="mr-1.5 h-3.5 w-3.5" />
           Add
@@ -1075,7 +1000,7 @@ function GenerateAssertionsDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onAccept: (assertions: Assertion[], mode: 'add' | 'replace') => void;
+  onAccept: (assertions: Assertion[], mode: 'add' | 'replace', requirements?: Requirement[]) => void;
   mode: 'generate' | 'additional' | 'regenerate';
 }) {
   const { config } = useEval();
@@ -1243,6 +1168,7 @@ function GenerateAssertionsDialog({
           prompts: promptsPayload,
           existingAssertions,
           requirements: includedRequirements.map((r) => ({
+            id: r.id,
             text: r.text,
             category: r.category,
             priority: r.priority,
@@ -1255,7 +1181,7 @@ function GenerateAssertionsDialog({
 
       const data = (await res.json()) as {
         suggestions?: Array<
-          Omit<AssertionSuggestion, 'id'> & { assertionType: string }
+          Omit<AssertionSuggestion, 'id'> & { assertionType: string; sourceRequirementIds?: string[] }
         >;
         error?: string;
       };
@@ -1270,17 +1196,18 @@ function GenerateAssertionsDialog({
         return;
       }
 
-      const withIds: AssertionSuggestion[] = data.suggestions.map((s) => ({
+      const withIds: SuggestionWithTraceability[] = data.suggestions.map((s) => ({
         id: generateId(),
         type: s.type,
         assertionType: s.assertionType as AssertionSuggestion['assertionType'],
         metric: s.metric,
         value: s.value,
         explanation: s.explanation,
+        sourceRequirementIds: s.sourceRequirementIds,
       }));
 
       const added = assertionsFromSuggestions(withIds);
-      onAccept(added, postGenAction === 'replace' ? 'replace' : 'add');
+      onAccept(added, postGenAction === 'replace' ? 'replace' : 'add', requirements);
       const verb = postGenAction === 'replace' ? 'Replaced with' : 'Added';
       toast.success(`${verb} ${added.length} assertion${added.length === 1 ? '' : 's'} from ${includedRequirements.length} requirement${includedRequirements.length === 1 ? '' : 's'}`);
       onOpenChange(false);
@@ -1604,10 +1531,124 @@ function AddAssertionPopover({
   );
 }
 
+// ─── Requirements Coverage Panel ──────────────────────────────────────────────
+
+function RequirementsCoveragePanel({
+  requirements,
+  assertions,
+}: {
+  requirements: Requirement[];
+  assertions: Assertion[];
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  const coveredReqIds = new Set<string>();
+  for (const a of assertions) {
+    if (a.sourceRequirementIds) {
+      for (const id of a.sourceRequirementIds) {
+        coveredReqIds.add(id);
+      }
+    }
+  }
+
+  const includedRequirements = requirements.filter((r) => r.included);
+  const coveredCount = includedRequirements.filter((r) => coveredReqIds.has(r.id)).length;
+  const totalCount = includedRequirements.length;
+  const allCovered = coveredCount === totalCount && totalCount > 0;
+
+  if (totalCount === 0) return null;
+
+  return (
+    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+      <div className="mt-3 rounded-lg border border-border bg-card overflow-hidden">
+        <CollapsibleTrigger asChild>
+          <button className="flex w-full items-center gap-3 px-4 py-2.5 hover:bg-muted/50 transition-colors text-left">
+            <div className={cn(
+              'flex h-6 w-6 shrink-0 items-center justify-center rounded-full',
+              allCovered ? 'bg-emerald-500/10' : 'bg-amber-500/10',
+            )}>
+              {allCovered
+                ? <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                : <Circle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+              }
+            </div>
+            <div className="flex-1 min-w-0">
+              <span className="text-sm font-medium">Requirements Coverage</span>
+              <span className="ml-2 text-xs text-muted-foreground">
+                {coveredCount}/{totalCount} covered
+              </span>
+            </div>
+            <Badge
+              variant="outline"
+              className={cn(
+                'shrink-0 text-xs font-normal',
+                allCovered
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                  : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400',
+              )}
+            >
+              {allCovered ? 'Full Coverage' : `${totalCount - coveredCount} uncovered`}
+            </Badge>
+            {isOpen
+              ? <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" />
+              : <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+            }
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="border-t border-border px-4 py-3 space-y-2">
+            {includedRequirements.map((req) => {
+              const isCovered = coveredReqIds.has(req.id);
+              const linkedAssertions = assertions.filter(
+                (a) => a.sourceRequirementIds?.includes(req.id),
+              );
+              return (
+                <div
+                  key={req.id}
+                  className={cn(
+                    'flex items-start gap-2.5 rounded-md px-3 py-2',
+                    isCovered ? 'bg-emerald-500/5' : 'bg-amber-500/5',
+                  )}
+                >
+                  {isCovered
+                    ? <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+                    : <Circle className="h-4 w-4 shrink-0 mt-0.5 text-amber-500 dark:text-amber-400" />
+                  }
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <p className="text-xs text-foreground">{req.text}</p>
+                    {isCovered && linkedAssertions.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {linkedAssertions.map((a) => (
+                          <Badge
+                            key={a.id}
+                            variant="outline"
+                            className="text-[10px] font-normal border-sky-500/30 bg-sky-500/5 text-sky-600 dark:text-sky-400"
+                          >
+                            {a.type}{a.metric ? ` · ${a.metric}` : ''}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                    {!isCovered && (
+                      <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                        No assertion covers this requirement
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
+  );
+}
+
 // ─── AssertionsSection ────────────────────────────────────────────────────────
 
 export function AssertionsSection() {
-  const { config, addAssertion, updateAssertion, deleteAssertion, duplicateAssertion, replaceAllAssertions, deleteAssertionsByIds, deleteAllAssertions } =
+  const { config, addAssertion, updateAssertion, deleteAssertion, duplicateAssertion, replaceAllAssertions, deleteAssertionsByIds, deleteAllAssertions, setRequirements } =
     useEval();
   const [generateOpen, setGenerateOpen] = useState(false);
   const [generateMode, setGenerateMode] = useState<'generate' | 'additional' | 'regenerate'>('generate');
@@ -1692,11 +1733,14 @@ export function AssertionsSection() {
     setNewAssertionId(id);
   };
 
-  const handleAcceptGenerated = (assertions: Assertion[], mode: 'add' | 'replace') => {
+  const handleAcceptGenerated = (assertions: Assertion[], mode: 'add' | 'replace', generatedRequirements?: Requirement[]) => {
     if (mode === 'replace') {
       replaceAllAssertions(assertions);
     } else {
       assertions.forEach((a) => addAssertion(a));
+    }
+    if (generatedRequirements && generatedRequirements.length > 0) {
+      setRequirements(generatedRequirements);
     }
   };
 
@@ -1813,6 +1857,14 @@ export function AssertionsSection() {
         </div>
       )}
 
+      {/* ── Requirements Coverage Panel ── */}
+      {config.requirements && config.requirements.length > 0 && hasAssertions && (
+        <RequirementsCoveragePanel
+          requirements={config.requirements}
+          assertions={assertions}
+        />
+      )}
+
       <div className={hasAssertions ? 'mt-2' : 'mt-3'}>
         {assertions.length === 0 ? (
           <div className="py-8 text-center">
@@ -1881,6 +1933,7 @@ export function AssertionsSection() {
                 isNew={assertion.id === newAssertionId}
                 bulkToggle={bulkToggle}
                 selected={selectedIds.has(assertion.id)}
+                requirements={config.requirements}
                 onToggleSelect={() => toggleSelect(assertion.id)}
                 onUpdate={(updated) => updateAssertion(index, updated)}
                 onDelete={() => setPendingDeleteIndex(index)}
